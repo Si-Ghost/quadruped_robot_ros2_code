@@ -24,7 +24,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'motor_rotates = leg_rotates.motor_rotates:main'
+            'motor_rotates = leg_rotates.motor_rotates:main',
+            'motor_controller = leg_rotates.motor_controller:main'
         ],
     },
 )
