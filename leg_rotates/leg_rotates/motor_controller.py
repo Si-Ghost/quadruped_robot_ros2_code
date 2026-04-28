@@ -27,7 +27,7 @@ class MotorControllerNode(Node):
 
     def request_initial_position(self):
         cmd = MotorCommand()
-        cmd.id = 2
+        cmd.id = 0
         cmd.q = 0.0
         cmd.kp = 0.0
         cmd.kd = 0.0

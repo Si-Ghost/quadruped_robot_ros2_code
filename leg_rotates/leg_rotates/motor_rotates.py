@@ -25,6 +25,36 @@ class MotorRotatesNode(Node):
             10)
         self.publisher = self.create_publisher(MotorState, 'motor_state', 10)
 
+    def _is_valid_data(self):
+        """Check if motor response data has valid numeric fields."""
+        for attr in ('tau', 'q', 'dq', 'temp', 'merror'):
+            val = getattr(self.data, attr, None)
+            if val is None:
+                return False
+            if attr == 'merror':
+                if not isinstance(val, int):
+                    return False
+            else:
+                if not isinstance(val, (int, float)):
+                    return False
+        return True
+
+    def _build_state(self, comm_ok):
+        state = MotorState()
+        if comm_ok:
+            state.tau = float(self.data.tau)
+            state.q = float(self.data.q)
+            state.dq = float(self.data.dq)
+            state.temp = float(self.data.temp)
+            state.merror = int(self.data.merror)
+        else:
+            state.tau = 0.0
+            state.q = 0.0
+            state.dq = 0.0
+            state.temp = 0.0
+            state.merror = -1
+        return state
+
     def command_callback(self, msg):
         self.cmd.id = msg.id
         self.cmd.mode = self.motor_mode
@@ -34,17 +64,18 @@ class MotorRotatesNode(Node):
         self.cmd.dq = msg.dq
         self.cmd.tau = msg.tau
 
-        self.serial.sendRecv(self.cmd, self.data)
+        comm_ok = False
+        try:
+            self.serial.sendRecv(self.cmd, self.data)
+            comm_ok = self._is_valid_data()
+        except Exception:
+            self.get_logger().error('Motor communication failed', throttle_duration_sec=1.0)
 
-        state_msg = MotorState()
-        state_msg.tau = self.data.tau
-        state_msg.q = self.data.q
-        state_msg.dq = self.data.dq
-        state_msg.temp = self.data.temp
-        state_msg.merror = self.data.merror
+        state_msg = self._build_state(comm_ok)
         self.publisher.publish(state_msg)
 
-        self.update_display(self.data)
+        if comm_ok:
+            self.update_display(self.data)
 
     def update_display(self, data):
         ratio = queryGearRatio(MotorType.GO_M8010_6)
@@ -64,7 +95,10 @@ class MotorRotatesNode(Node):
         self.cmd.kp = 0.0
         self.cmd.kd = 0.0
         self.cmd.tau = 0.0
-        self.serial.sendRecv(self.cmd, self.data)
+        try:
+            self.serial.sendRecv(self.cmd, self.data)
+        except Exception:
+            pass
         self.get_logger().info('Motor stopped')
 
 
