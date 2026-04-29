@@ -1,5 +1,5 @@
-float32 tau
-float32 q
-float32 dq
-float32 temp
-int32 meeror
+float32[12] tau
+float32[12] q
+float32[12] dq
+float32[12] temp
+int32[12] meeror

@@ -1,8 +1,11 @@
 import rclpy
 from rclpy.node import Node
-from interface_type.msg import MotorCommand, MotorState
+from interface_type.msg import MotorCommand, MotorState, MotorPd
 
 from unitree_actuator_sdk import *
+
+TOTAL_MOTORS = 12
+INIT_TIMEOUT_ITER = 200  # ~1 s at 200 Hz
 
 
 class MotorControllerNode(Node):
@@ -10,70 +13,87 @@ class MotorControllerNode(Node):
         super().__init__('motor_controller')
         self.get_logger().info('MotorControllerNode started')
 
-        self.publisher = self.create_publisher(MotorCommand, 'motor_command', 10)
+        self.cmd_pub = self.create_publisher(MotorCommand, 'motor_command', 10)
+        self.pd_pub = self.create_publisher(MotorPd, 'motor_pd', 10)
         self.state_sub = self.create_subscription(
-            MotorState,
-            'motor_state',
-            self.state_callback,
-            10)
+            MotorState, 'motor_state', self.state_callback, 10)
 
         self.gear_ratio = queryGearRatio(MotorType.GO_M8010_6)
-        self.target_q = -10.0 * (3.14159 / 180.0) * self.gear_ratio
-        self.q_ini = None
+        self.target_offset = -10.0 * (3.14159 / 180.0) * self.gear_ratio
+
+        self.q_ini = [None] * TOTAL_MOTORS
+        self.init_counter = 0
         self.init_done = False
 
-        self.request_initial_position()
-        self.timer = self.create_timer(0.005, self.control_loop)
+        self.publish_pd()
+        self.pd_timer = self.create_timer(1.0, self.publish_pd)
+        self.control_timer = self.create_timer(0.005, self.control_loop)
 
-    def request_initial_position(self):
-        cmd = MotorCommand()
-        cmd.id = 0
-        cmd.q = 0.0
-        cmd.kp = 0.0
-        cmd.kd = 0.0
-        cmd.dq = 0.0
-        cmd.tau = 0.0
-        self.publisher.publish(cmd)
+    def publish_pd(self):
+        pd_msg = MotorPd()
+        pd_msg.kp = [0.4] * TOTAL_MOTORS
+        pd_msg.kd = [0.01] * TOTAL_MOTORS
+        self.pd_pub.publish(pd_msg)
 
     def state_callback(self, msg):
         if not self.init_done:
-            self.q_ini = msg.q
-            self.init_done = True
-            self.get_logger().info(f'Initial position: {self.q_ini:.3f}')
+            for i in range(TOTAL_MOTORS):
+                if msg.merror[i] != -1 and self.q_ini[i] is None:
+                    self.q_ini[i] = msg.q[i]
+                    self.get_logger().info(f'  Motor {i} init q={self.q_ini[i]:.3f}')
 
+        self.update_display(msg)
+
+    def update_display(self, msg):
         ratio = self.gear_ratio
-        lines = [
-            f"力矩: {msg.tau:.3f}",
-            f"电机角度: {msg.q / ratio:.3f}",
-            f"电机角速度: {msg.dq / ratio:.3f}",
-            f"温度: {msg.temp:.1f}",
-            f"错误: {msg.merror}"
-        ]
+        lines = []
+        for i in range(TOTAL_MOTORS):
+            status = '*' if msg.merror[i] == -1 else ' '
+            lines.append(
+                f"{status}M{i:02d} tau={msg.tau[i]:+6.2f} q={msg.q[i]/ratio:+7.3f} "
+                f"dq={msg.dq[i]/ratio:+7.3f} T={msg.temp[i]:4.0f} err={msg.merror[i]:2d}"
+            )
         output = "\n".join(lines)
         print(output)
         print(f"\033[{len(lines)}F", end="", flush=True)
 
     def control_loop(self):
         if not self.init_done:
-            self.request_initial_position()
-            return
+            self.init_counter += 1
+            all_ready = all(q is not None for q in self.q_ini)
+            timed_out = self.init_counter >= INIT_TIMEOUT_ITER
+
+            if all_ready or timed_out:
+                self.init_done = True
+                active = sum(1 for q in self.q_ini if q is not None)
+                self.get_logger().info(
+                    f'Init complete: {active}/{TOTAL_MOTORS} motors active'
+                )
 
         cmd = MotorCommand()
-        cmd.id = 0
-        cmd.q = self.target_q + self.q_ini
-        cmd.kp = 0.4
-        cmd.kd = 0.01
-        cmd.dq = 0.0
-        cmd.tau = 0.0
-        self.publisher.publish(cmd)
+        cmd.id = [i % 3 for i in range(TOTAL_MOTORS)]
+        cmd.q = [0.0] * TOTAL_MOTORS
+        cmd.dq = [0.0] * TOTAL_MOTORS
+        cmd.tau = [0.0] * TOTAL_MOTORS
+
+        for i in range(TOTAL_MOTORS):
+            if self.q_ini[i] is not None:
+                cmd.q[i] = self.target_offset + self.q_ini[i]
+            else:
+                cmd.q[i] = 0.0
+
+        self.cmd_pub.publish(cmd)
 
     def __del__(self):
         cmd = MotorCommand()
-        cmd.id = 0
-        cmd.kp = 0.0
-        cmd.kd = 0.0
-        cmd.tau = 0.0
-        self.publisher.publish(cmd)
+        cmd.id = [i % 3 for i in range(TOTAL_MOTORS)]
+        cmd.q = [0.0] * TOTAL_MOTORS
+        cmd.dq = [0.0] * TOTAL_MOTORS
+        cmd.tau = [0.0] * TOTAL_MOTORS
+        try:
+            self.cmd_pub.publish(cmd)
+        except Exception:
+            pass
         self.get_logger().info('Controller stopped')
 
 

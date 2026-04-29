@@ -1,105 +1,138 @@
 import rclpy
 from rclpy.node import Node
-from interface_type.msg import MotorCommand, MotorState
+from interface_type.msg import MotorCommand, MotorState, MotorPd
 
 from unitree_actuator_sdk import *
+
+
+# 4 legs, each a serial port with 3 motors (IDs 0,1,2)
+PORTS = [
+    {'path': '/dev/ttyUSB0', 'base': 0},
+    {'path': '/dev/ttyUSB1', 'base': 3},
+    {'path': '/dev/ttyUSB2', 'base': 6},
+    {'path': '/dev/ttyUSB3', 'base': 9},
+]
+MOTORS_PER_PORT = 3
+TOTAL_MOTORS = 12
 
 
 class MotorRotatesNode(Node):
     def __init__(self):
         super().__init__('motor_rotates')
-        self.get_logger().info('MotorRotatesNode started')
+        self.get_logger().info('MotorRotatesNode starting')
 
-        self.serial = SerialPort('/dev/ttyUSB0')
-        self.cmd = MotorCmd()
-        self.data = MotorData()
-
-        self.cmd.motorType = MotorType.GO_M8010_6
-        self.data.motorType = MotorType.GO_M8010_6
         self.motor_mode = queryMotorMode(MotorType.GO_M8010_6, MotorMode.FOC)
 
-        self.subscription = self.create_subscription(
-            MotorCommand,
-            'motor_command',
-            self.command_callback,
-            10)
-        self.publisher = self.create_publisher(MotorState, 'motor_state', 10)
+        self.ports = []
+        for cfg in PORTS:
+            port = {
+                'path': cfg['path'],
+                'base': cfg['base'],
+                'serial': None,
+                'cmd': None,
+                'data': None,
+                'active': False,
+            }
+            try:
+                port['serial'] = SerialPort(cfg['path'])
+                port['cmd'] = MotorCmd()
+                port['data'] = MotorData()
+                port['cmd'].motorType = MotorType.GO_M8010_6
+                port['data'].motorType = MotorType.GO_M8010_6
+                port['active'] = True
+                self.get_logger().info(f'  {cfg["path"]} -> motors {cfg["base"]}-{cfg["base"]+2}')
+            except Exception as e:
+                self.get_logger().warn(f'  {cfg["path"]} unavailable: {e}')
+            self.ports.append(port)
 
-    def _is_valid_data(self):
-        """Check if motor response data has valid numeric fields."""
+        if not any(p['active'] for p in self.ports):
+            self.get_logger().error('No serial ports available — motor driver is idle')
+
+        self.kp = [0.0] * TOTAL_MOTORS
+        self.kd = [0.0] * TOTAL_MOTORS
+
+        self.cmd_sub = self.create_subscription(
+            MotorCommand, 'motor_command', self.command_callback, 10)
+        self.pd_sub = self.create_subscription(
+            MotorPd, 'motor_pd', self.pd_callback, 10)
+        self.state_pub = self.create_publisher(MotorState, 'motor_state', 10)
+
+    def pd_callback(self, msg):
+        self.kp = list(msg.kp)
+        self.kd = list(msg.kd)
+
+    @staticmethod
+    def _is_valid_data(data):
         for attr in ('tau', 'q', 'dq', 'temp', 'merror'):
-            val = getattr(self.data, attr, None)
+            val = getattr(data, attr, None)
             if val is None:
                 return False
             if attr == 'merror':
                 if not isinstance(val, int):
                     return False
-            else:
-                if not isinstance(val, (int, float)):
-                    return False
+            elif not isinstance(val, (int, float)):
+                return False
         return True
 
-    def _build_state(self, comm_ok):
+    def _fill_default_state(self):
         state = MotorState()
-        if comm_ok:
-            state.tau = float(self.data.tau)
-            state.q = float(self.data.q)
-            state.dq = float(self.data.dq)
-            state.temp = float(self.data.temp)
-            state.merror = int(self.data.merror)
-        else:
-            state.tau = 0.0
-            state.q = 0.0
-            state.dq = 0.0
-            state.temp = 0.0
-            state.merror = -1
+        state.tau = [0.0] * TOTAL_MOTORS
+        state.q = [0.0] * TOTAL_MOTORS
+        state.dq = [0.0] * TOTAL_MOTORS
+        state.temp = [0.0] * TOTAL_MOTORS
+        state.merror = [-1] * TOTAL_MOTORS
         return state
 
     def command_callback(self, msg):
-        self.cmd.id = msg.id
-        self.cmd.mode = self.motor_mode
-        self.cmd.q = msg.q
-        self.cmd.kp = msg.kp
-        self.cmd.kd = msg.kd
-        self.cmd.dq = msg.dq
-        self.cmd.tau = msg.tau
+        state = self._fill_default_state()
 
-        comm_ok = False
-        try:
-            self.serial.sendRecv(self.cmd, self.data)
-            comm_ok = self._is_valid_data()
-        except Exception:
-            self.get_logger().error('Motor communication failed', throttle_duration_sec=1.0)
+        for port in self.ports:
+            if not port['active']:
+                continue
 
-        state_msg = self._build_state(comm_ok)
-        self.publisher.publish(state_msg)
+            for local_id in range(MOTORS_PER_PORT):
+                gi = port['base'] + local_id
 
-        if comm_ok:
-            self.update_display(self.data)
+                port['cmd'].id = msg.id[gi]
+                port['cmd'].mode = self.motor_mode
+                port['cmd'].q = msg.q[gi]
+                port['cmd'].kp = self.kp[gi]
+                port['cmd'].kd = self.kd[gi]
+                port['cmd'].dq = msg.dq[gi]
+                port['cmd'].tau = msg.tau[gi]
 
-    def update_display(self, data):
-        ratio = queryGearRatio(MotorType.GO_M8010_6)
-        lines = [
-            f"力矩: {data.tau:.3f}",
-            f"电流: {data.tau / 0.63895:.3f}",
-            f"电机角度: {data.q / ratio:.3f}",
-            f"电机角速度: {data.dq / ratio:.3f}",
-            f"温度: {data.temp:.1f}",
-            f"错误: {data.merror}"
-        ]
-        output = "\n".join(lines)
-        print(output)
-        print(f"\033[{len(lines)}F", end="", flush=True)
+                try:
+                    port['serial'].sendRecv(port['cmd'], port['data'])
+                    if self._is_valid_data(port['data']):
+                        state.tau[gi] = float(port['data'].tau)
+                        state.q[gi] = float(port['data'].q)
+                        state.dq[gi] = float(port['data'].dq)
+                        state.temp[gi] = float(port['data'].temp)
+                        state.merror[gi] = int(port['data'].merror)
+                except Exception:
+                    pass
+
+        self.state_pub.publish(state)
 
     def __del__(self):
-        self.cmd.kp = 0.0
-        self.cmd.kd = 0.0
-        self.cmd.tau = 0.0
-        try:
-            self.serial.sendRecv(self.cmd, self.data)
-        except Exception:
-            pass
-        self.get_logger().info('Motor stopped')
+        ports = getattr(self, 'ports', [])
+        mode = getattr(self, 'motor_mode', 0)
+        for port in ports:
+            if not port['active']:
+                continue
+            for local_id in range(MOTORS_PER_PORT):
+                try:
+                    port['cmd'].id = local_id
+                    port['cmd'].mode = mode
+                    port['cmd'].q = 0.0
+                    port['cmd'].kp = 0.0
+                    port['cmd'].kd = 0.0
+                    port['cmd'].dq = 0.0
+                    port['cmd'].tau = 0.0
+                    port['serial'].sendRecv(port['cmd'], port['data'])
+                except Exception:
+                    break
+        self.get_logger().info('All motors stopped')
 
 
 def main(args=None):
