@@ -5,7 +5,40 @@ from interface_type.msg import MotorCommand, MotorState, MotorPd
 from unitree_actuator_sdk import *
 
 TOTAL_MOTORS = 12
-INIT_TIMEOUT_ITER = 200  # ~1 s at 200 Hz
+INIT_TIMEOUT_ITER = 200
+
+
+class QuinticTrajectory:
+    """五次多项式轨迹，满足 q(0)=q0, q(T)=qdes, dq(0)=dq(T)=0, ddq(0)=ddq(T)=0"""
+
+    def __init__(self, q0, q_des, duration):
+        self.q0 = float(q0)
+        self.q_des = float(q_des)
+        self.T = float(duration)
+        delta = self.q_des - self.q0
+        T3 = self.T ** 3
+        T4 = self.T ** 4
+        T5 = self.T ** 5
+        self.a0 = self.q0
+        self.a3 = 10.0 * delta / T3
+        self.a4 = -15.0 * delta / T4
+        self.a5 = 6.0 * delta / T5
+
+    def evaluate(self, t):
+        """返回 (位置, 速度)，t 为轨迹已流逝时间（秒）"""
+        if t <= 0.0:
+            return self.q0, 0.0
+        if t >= self.T:
+            return self.q_des, 0.0
+
+        t2 = t * t
+        t3 = t2 * t
+        t4 = t3 * t
+        t5 = t4 * t
+
+        q = self.a0 + self.a3 * t3 + self.a4 * t4 + self.a5 * t5
+        dq = 3.0 * self.a3 * t2 + 4.0 * self.a4 * t3 + 5.0 * self.a5 * t4
+        return q, dq
 
 
 class MotorControllerNode(Node):
@@ -13,17 +46,25 @@ class MotorControllerNode(Node):
         super().__init__('motor_controller')
         self.get_logger().info('MotorControllerNode started')
 
+        self.declare_parameter('trajectory_duration', 1.0)
+        self.traj_duration = self.get_parameter('trajectory_duration').value
+
         self.cmd_pub = self.create_publisher(MotorCommand, 'motor_command', 10)
         self.pd_pub = self.create_publisher(MotorPd, 'motor_pd', 10)
         self.state_sub = self.create_subscription(
             MotorState, 'motor_state', self.state_callback, 10)
 
         self.gear_ratio = queryGearRatio(MotorType.GO_M8010_6)
-        self.target_offset = -10.0 * (3.14159 / 180.0) * self.gear_ratio
+        deg_to_raw = 3.14159 / 180.0 * self.gear_ratio
+        # 每个电机的目标角度（度），直接用 target_degrees[i] = 90 赋值即可
+        self.target_degrees = [-10.0] * TOTAL_MOTORS
+        self.target_offsets = [d * deg_to_raw for d in self.target_degrees]
 
         self.q_ini = [None] * TOTAL_MOTORS
+        self.trajectories = [None] * TOTAL_MOTORS
         self.init_counter = 0
         self.init_done = False
+        self.traj_start_time = None
 
         self.publish_pd()
         self.pd_timer = self.create_timer(1.0, self.publish_pd)
@@ -40,24 +81,59 @@ class MotorControllerNode(Node):
             for i in range(TOTAL_MOTORS):
                 if msg.merror[i] != -1 and self.q_ini[i] is None:
                     self.q_ini[i] = msg.q[i]
-                    self.get_logger().info(f'  Motor {i} init q={self.q_ini[i]:.3f}')
+                    self.get_logger().info(
+                        f'  Motor {i:02d} init q={self.q_ini[i]:.3f}')
 
         self.update_display(msg)
 
     def update_display(self, msg):
+        import shutil
+        term_w = shutil.get_terminal_size((120, 24)).columns
+
         ratio = self.gear_ratio
         lines = []
         for i in range(TOTAL_MOTORS):
             status = '*' if msg.merror[i] == -1 else ' '
-            lines.append(
-                f"{status}M{i:02d} tau={msg.tau[i]:+6.2f} q={msg.q[i]/ratio:+7.3f} "
-                f"dq={msg.dq[i]/ratio:+7.3f} T={msg.temp[i]:4.0f} err={msg.merror[i]:2d}"
-            )
-        output = "\n".join(lines)
-        print(output)
-        print(f"\033[{len(lines)}F", end="", flush=True)
+            traj = self.trajectories[i]
+            if traj is not None:
+                elapsed = (self.get_clock().now().nanoseconds * 1e-9
+                           - (self.traj_start_time or 0))
+                remain = max(0, traj.T - elapsed)
+                prog = f'{remain:.1f}s'
+            elif self.q_ini[i] is not None:
+                prog = 'hold'
+            else:
+                prog = '----'
+            line = (f"{status}M{i:02d} tau={msg.tau[i]:+6.2f} "
+                    f"q={msg.q[i]/ratio:+7.3f} dq={msg.dq[i]/ratio:+7.3f} "
+                    f"T={msg.temp[i]:4.0f} err={msg.merror[i]:2d} [{prog:>8}]")
+            lines.append(line[:term_w - 1])
+
+        if not getattr(self, '_display_ready', False):
+            print('\n' * (len(lines) - 1))
+            self._display_ready = True
+
+        print(f"\033[{len(lines)}A", end='')
+        for line in lines:
+            print(f"\033[K{line}")
+        print('\033[J', end='', flush=True)
+
+    def _start_trajectories(self, now):
+        """为所有在线的电机创建五次多项式轨迹"""
+        for i in range(TOTAL_MOTORS):
+            if self.q_ini[i] is not None:
+                q_start = self.q_ini[i]
+                q_end = self.q_ini[i] + self.target_offsets[i]
+                self.trajectories[i] = QuinticTrajectory(
+                    q_start, q_end, self.traj_duration)
+                self.get_logger().info(
+                    f'  M{i:02d} traj: {q_start:.1f} -> {q_end:.1f} '
+                    f'({self.traj_duration:.1f}s)')
+        self.traj_start_time = now
 
     def control_loop(self):
+        now = self.get_clock().now().nanoseconds * 1e-9
+
         if not self.init_done:
             self.init_counter += 1
             all_ready = all(q is not None for q in self.q_ini)
@@ -67,8 +143,9 @@ class MotorControllerNode(Node):
                 self.init_done = True
                 active = sum(1 for q in self.q_ini if q is not None)
                 self.get_logger().info(
-                    f'Init complete: {active}/{TOTAL_MOTORS} motors active'
-                )
+                    f'Init complete: {active}/{TOTAL_MOTORS} motors, '
+                    f'trajectory {self.traj_duration:.1f}s')
+                self._start_trajectories(now)
 
         cmd = MotorCommand()
         cmd.id = [i % 3 for i in range(TOTAL_MOTORS)]
@@ -76,11 +153,16 @@ class MotorControllerNode(Node):
         cmd.dq = [0.0] * TOTAL_MOTORS
         cmd.tau = [0.0] * TOTAL_MOTORS
 
-        for i in range(TOTAL_MOTORS):
-            if self.q_ini[i] is not None:
-                cmd.q[i] = self.target_offset + self.q_ini[i]
-            else:
-                cmd.q[i] = 0.0
+        if self.init_done and self.traj_start_time is not None:
+            elapsed = now - self.traj_start_time
+
+            for i in range(TOTAL_MOTORS):
+                traj = self.trajectories[i]
+                if traj is None:
+                    continue
+                q, dq = traj.evaluate(elapsed)
+                cmd.q[i] = q
+                cmd.dq[i] = dq
 
         self.cmd_pub.publish(cmd)
 
