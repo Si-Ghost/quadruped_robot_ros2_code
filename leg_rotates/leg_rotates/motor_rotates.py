@@ -1,3 +1,4 @@
+import os
 import rclpy
 from rclpy.node import Node
 from interface_type.msg import MotorCommand, MotorState, MotorPd
@@ -13,6 +14,18 @@ PORTS = [
 ]
 MOTORS_PER_PORT = 3
 TOTAL_MOTORS = 12
+
+
+def _suppress_fd(fd_target, null_fd):
+    """Redirect fd_target to /dev/null, return old fd that must be restored."""
+    old = os.dup(fd_target)
+    os.dup2(null_fd, fd_target)
+    return old
+
+
+def _restore_fd(fd_target, old):
+    os.dup2(old, fd_target)
+    os.close(old)
 
 
 class MotorRotatesNode(Node):
@@ -31,6 +44,9 @@ class MotorRotatesNode(Node):
                 'cmd': None,
                 'data': None,
                 'active': False,
+                'failures': 0,
+                'suspended': False,
+                'probe_cycle': 0,
             }
             try:
                 port['serial'] = SerialPort(cfg['path'])
@@ -54,10 +70,12 @@ class MotorRotatesNode(Node):
         self.seen = [False] * TOTAL_MOTORS
         self.cmd_q = [0.0] * TOTAL_MOTORS
         self._display_ready = False
-        self.consecutive_failures = [0] * TOTAL_MOTORS
-        self.max_consecutive_failures = 10
+        self._suspend_threshold = 10       # 端口连续失败N次后暂停
+        self._probe_interval_cycles = 100  # 暂停后每N个周期探测一次
+        self._cycle_count = 0
+        self._devnull = os.open(os.devnull, os.O_WRONLY)
         self._last_display_time = 0.0
-        self._display_interval = 0.5  # 2Hz, 降低刷新率避免眼花
+        self._display_interval = 0.5
 
         self.cmd_sub = self.create_subscription(
             MotorCommand, 'motor_command', self.command_callback, 10)
@@ -115,6 +133,7 @@ class MotorRotatesNode(Node):
 
     def command_callback(self, msg):
         state = self._fill_default_state()
+        self._cycle_count += 1
 
         for i in range(TOTAL_MOTORS):
             self.cmd_q[i] = msg.q[i]
@@ -122,6 +141,16 @@ class MotorRotatesNode(Node):
         for port in self.ports:
             if not port['active']:
                 continue
+
+            # 端口暂停退避：死端口只偶尔探测
+            if port['suspended']:
+                if self._cycle_count - port.get('probe_cycle', 0) < self._probe_interval_cycles:
+                    # 保持 merror=-1，不通信
+                    continue
+                # 探测周期到了，临时解除一次
+                port['suspended'] = False
+
+            port_ok_count = 0
             for local_id in range(MOTORS_PER_PORT):
                 gi = port['base'] + local_id
                 port['cmd'].id = msg.id[gi]
@@ -132,25 +161,38 @@ class MotorRotatesNode(Node):
                 port['cmd'].dq = msg.dq[gi]
                 port['cmd'].tau = msg.tau[gi]
                 try:
-                    ok = port['serial'].sendRecv(port['cmd'], port['data'])
-                    if not ok:
-                        self.consecutive_failures[gi] += 1
-                    elif self._is_valid_data(port['data']):
+                    # 屏蔽 C++ SDK 的 printf 警告
+                    old_out = _suppress_fd(1, self._devnull)
+                    old_err = _suppress_fd(2, self._devnull)
+                    try:
+                        ok = port['serial'].sendRecv(port['cmd'], port['data'])
+                    finally:
+                        _restore_fd(1, old_out)
+                        _restore_fd(2, old_err)
+
+                    if ok and self._is_valid_data(port['data']):
                         state.tau[gi] = float(port['data'].tau)
                         state.q[gi] = float(port['data'].q)
                         state.dq[gi] = float(port['data'].dq)
                         state.temp[gi] = float(port['data'].temp)
                         state.merror[gi] = int(port['data'].merror)
                         self.seen[gi] = True
-                        self.consecutive_failures[gi] = 0
-                    else:
-                        self.consecutive_failures[gi] += 1
-                        if self.consecutive_failures[gi] == self.max_consecutive_failures:
-                            self.get_logger().warn(
-                                f'  M{gi:02d} on {port["path"]}: '
-                                f'{self.max_consecutive_failures} consecutive CRC/fmt failures')
+                        port_ok_count += 1
                 except Exception:
-                    self.consecutive_failures[gi] += 1
+                    pass
+
+            # 只有端口上全部电机都失败才计入端口失败
+            if port_ok_count > 0:
+                port['failures'] = 0
+            else:
+                port['failures'] += 1
+                if port['failures'] >= self._suspend_threshold:
+                    if not port['suspended']:
+                        self.get_logger().warn(
+                            f'  {port["path"]} suspended after '
+                            f'{port["failures"]} failures')
+                    port['suspended'] = True
+                    port['probe_cycle'] = self._cycle_count
 
         self.state_pub.publish(state)
         self._update_display(state)
@@ -165,30 +207,44 @@ class MotorRotatesNode(Node):
         term_w = shutil.get_terminal_size((120, 24)).columns
 
         active_indices = [i for i in range(TOTAL_MOTORS) if self.seen[i]]
-        if not active_indices:
-            return
-
         ratio = queryGearRatio(MotorType.GO_M8010_6)
         lines = []
+
         for i in active_indices:
             port_idx = i // MOTORS_PER_PORT
-            port_ok = self.ports[port_idx]['active']
+            port = self.ports[port_idx]
+            port_ok = port['active'] and not port['suspended']
             if not port_ok:
-                flag = 'X'
-            elif self.consecutive_failures[i] > 0:
-                flag = '?'
-            elif state.merror[i] == -1:
-                flag = '*'
-            else:
+                flag = 'S'  # suspended
+            elif state.merror[i] != -1:
                 flag = ' '
+            else:
+                flag = '?'
             line = (f"{flag}M{i:02d} "
                     f"cmd={self.cmd_q[i]/ratio:+7.3f} "
                     f"real={state.q[i]/ratio:+7.3f} "
                     f"dq={state.dq[i]/ratio:+7.3f} "
                     f"tau={state.tau[i]:+6.2f} "
-                    f"err={state.merror[i]:2d}"
-                    f"{' FAIL'+str(self.consecutive_failures[i]) if self.consecutive_failures[i] > 0 else ''}")
+                    f"err={state.merror[i]:2d}")
             lines.append(line[:term_w - 1])
+
+        # 汇总行：活跃端口 / 死端口
+        alive = sum(1 for p in self.ports if p['active'] and not p['suspended'])
+        dead = sum(1 for p in self.ports if p['active'] and p['suspended'])
+        inactive = sum(1 for p in self.ports if not p['active'])
+        parts = []
+        if alive:
+            parts.append(f'{alive} port(s) OK')
+        if dead:
+            parts.append(f'{dead} suspended')
+        if inactive:
+            parts.append(f'{inactive} dead')
+        if not parts:
+            parts.append('no ports')
+        lines.append(f'--- {", ".join(parts)} ---')
+
+        if not active_indices and not lines:
+            return
 
         if not self._display_ready:
             print('\n' * (len(lines) - 1))
