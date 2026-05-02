@@ -1,0 +1,55 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="quadruped">
+
+  <xacro:macro name="motor_joint" params="index">
+    <joint name="joint_${index}" type="revolute">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <axis xyz="0 0 1"/>
+      <parent link="base_link"/>
+      <child link="motor_${index}_link"/>
+      <limit effort="50" velocity="30" lower="-12.56" upper="12.56"/>
+      <command_interface name="position"/>
+      <command_interface name="velocity"/>
+      <command_interface name="effort"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+    </joint>
+    <link name="motor_${index}_link"/>
+  </xacro:macro>
+
+  <link name="base_link"/>
+
+  <xacro:macro name="all_motors">
+    <xacro:motor_joint index="0"/>
+    <xacro:motor_joint index="1"/>
+    <xacro:motor_joint index="2"/>
+    <xacro:motor_joint index="3"/>
+    <xacro:motor_joint index="4"/>
+    <xacro:motor_joint index="5"/>
+    <xacro:motor_joint index="6"/>
+    <xacro:motor_joint index="7"/>
+    <xacro:motor_joint index="8"/>
+    <xacro:motor_joint index="9"/>
+    <xacro:motor_joint index="10"/>
+    <xacro:motor_joint index="11"/>
+  </xacro:macro>
+
+  <xacro:all_motors/>
+
+  <ros2_control name="UnitreeHardwareInterface" type="system">
+    <hardware>
+      <plugin>unitree_hardware_interface/UnitreeHardwareInterface</plugin>
+      <!-- Default port mapping: USB0→motors 0-2, USB1→3-5, USB2→6-8, USB3→9-11 -->
+      <param name="port_0">/dev/ttyUSB0:0</param>
+      <param name="port_1">/dev/ttyUSB1:3</param>
+      <param name="port_2">/dev/ttyUSB2:6</param>
+      <param name="port_3">/dev/ttyUSB3:9</param>
+      <param name="kp">0.4</param>
+      <param name="kd">0.01</param>
+      <param name="baudrate">4000000</param>
+      <param name="timeout_us">20000</param>
+    </hardware>
+  </ros2_control>
+
+</robot>

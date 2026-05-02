@@ -1,0 +1,7 @@
+<library path="unitree_hardware_interface">
+  <class name="unitree_hardware_interface/UnitreeHardwareInterface"
+         type="unitree_hardware_interface::UnitreeHardwareInterface"
+         base_class_type="hardware_interface::SystemInterface">
+    <description>Hardware interface for 12 Unitree GO-M8010-6 motors over 4 RS485 ports.</description>
+  </class>
+</library>

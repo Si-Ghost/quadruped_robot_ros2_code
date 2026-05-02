@@ -5,7 +5,7 @@ from interface_type.msg import MotorCommand, MotorState, MotorPd
 from unitree_actuator_sdk import *
 
 TOTAL_MOTORS = 12
-INIT_TIMEOUT_ITER = 200
+INIT_TIMEOUT_ITER = 50
 
 
 class QuinticTrajectory:
@@ -68,7 +68,7 @@ class MotorControllerNode(Node):
 
         self.publish_pd()
         self.pd_timer = self.create_timer(1.0, self.publish_pd)
-        self.control_timer = self.create_timer(0.005, self.control_loop)
+        self.control_timer = self.create_timer(0.02, self.control_loop)
 
     def publish_pd(self):
         pd_msg = MotorPd()
