@@ -72,7 +72,7 @@ class MotorRotatesNode(Node):
 
     @staticmethod
     def _is_valid_data(data):
-        # 1. SDK CRC check  — 硬件级校验，最可靠
+        # 1. SDK CRC check — 硬件级校验，最可靠
         if hasattr(data, 'correct') and not data.correct:
             return False
 
@@ -90,6 +90,16 @@ class MotorRotatesNode(Node):
         # 3. All-zero rejection — RS485通信失败时sendRecv返回全零但无异常
         if float(data.q) == 0.0 and float(data.dq) == 0.0 \
            and float(data.tau) == 0.0 and float(data.temp) == 0:
+            return False
+
+        # 4. Temp range — 正常电机温度 -40~150°C，异常值如 65535(0xFFFF) 说明通信失败
+        temp = float(data.temp)
+        if temp < -40.0 or temp > 150.0:
+            return False
+
+        # 5. Merror range — GO-M8010-6 错误码范围 0~7，超出说明数据损坏
+        merror = int(data.merror)
+        if merror < 0 or merror > 255:
             return False
 
         return True
@@ -122,8 +132,10 @@ class MotorRotatesNode(Node):
                 port['cmd'].dq = msg.dq[gi]
                 port['cmd'].tau = msg.tau[gi]
                 try:
-                    port['serial'].sendRecv(port['cmd'], port['data'])
-                    if self._is_valid_data(port['data']):
+                    ok = port['serial'].sendRecv(port['cmd'], port['data'])
+                    if not ok:
+                        self.consecutive_failures[gi] += 1
+                    elif self._is_valid_data(port['data']):
                         state.tau[gi] = float(port['data'].tau)
                         state.q[gi] = float(port['data'].q)
                         state.dq[gi] = float(port['data'].dq)

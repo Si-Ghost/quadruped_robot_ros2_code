@@ -104,9 +104,9 @@ class MotorControllerNode(Node):
         term_w = shutil.get_terminal_size((120, 24)).columns
 
         ratio = self.gear_ratio
+        active = [i for i in range(TOTAL_MOTORS) if msg.merror[i] != -1]
         lines = []
-        for i in range(TOTAL_MOTORS):
-            status = '*' if msg.merror[i] == -1 else ' '
+        for i in active:
             traj = self.trajectories[i]
             if traj is not None:
                 elapsed = (self.get_clock().now().nanoseconds * 1e-9
@@ -117,10 +117,12 @@ class MotorControllerNode(Node):
                 prog = 'hold'
             else:
                 prog = '----'
-            line = (f"{status}M{i:02d} tau={msg.tau[i]:+6.2f} "
+            line = (f" M{i:02d} tau={msg.tau[i]:+6.2f} "
                     f"q={msg.q[i]/ratio:+7.3f} dq={msg.dq[i]/ratio:+7.3f} "
                     f"T={msg.temp[i]:4.0f} err={msg.merror[i]:2d} [{prog:>8}]")
             lines.append(line[:term_w - 1])
+
+        lines.append(f'--- {len(active)}/{TOTAL_MOTORS} motors ---')
 
         if not getattr(self, '_display_ready', False):
             print('\n' * (len(lines) - 1))
