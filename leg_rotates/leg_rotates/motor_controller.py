@@ -65,6 +65,10 @@ class MotorControllerNode(Node):
         self.init_counter = 0
         self.init_done = False
         self.traj_start_time = None
+        self._valid_readings = [0] * TOTAL_MOTORS
+        self._min_valid_readings = 3
+        self._last_display_time = 0.0
+        self._display_interval = 0.5
 
         self.publish_pd()
         self.pd_timer = self.create_timer(1.0, self.publish_pd)
@@ -79,14 +83,23 @@ class MotorControllerNode(Node):
     def state_callback(self, msg):
         if not self.init_done:
             for i in range(TOTAL_MOTORS):
-                if msg.merror[i] != -1 and self.q_ini[i] is None:
-                    self.q_ini[i] = msg.q[i]
-                    self.get_logger().info(
-                        f'  Motor {i:02d} init q={self.q_ini[i]:.3f}')
+                if msg.merror[i] != -1:
+                    if self.q_ini[i] is None:
+                        self._valid_readings[i] += 1
+                        if self._valid_readings[i] >= self._min_valid_readings:
+                            self.q_ini[i] = msg.q[i]
+                            self.get_logger().info(
+                                f'  Motor {i:02d} init q={self.q_ini[i]:.3f} '
+                                f'(after {self._min_valid_readings} valid readings)')
 
         self.update_display(msg)
 
     def update_display(self, msg):
+        now = self.get_clock().now().nanoseconds * 1e-9
+        if now - self._last_display_time < self._display_interval:
+            return
+        self._last_display_time = now
+
         import shutil
         term_w = shutil.get_terminal_size((120, 24)).columns
 

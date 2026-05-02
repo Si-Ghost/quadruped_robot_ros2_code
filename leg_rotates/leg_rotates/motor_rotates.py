@@ -54,6 +54,10 @@ class MotorRotatesNode(Node):
         self.seen = [False] * TOTAL_MOTORS
         self.cmd_q = [0.0] * TOTAL_MOTORS
         self._display_ready = False
+        self.consecutive_failures = [0] * TOTAL_MOTORS
+        self.max_consecutive_failures = 10
+        self._last_display_time = 0.0
+        self._display_interval = 0.5  # 2Hz, 降低刷新率避免眼花
 
         self.cmd_sub = self.create_subscription(
             MotorCommand, 'motor_command', self.command_callback, 10)
@@ -68,6 +72,11 @@ class MotorRotatesNode(Node):
 
     @staticmethod
     def _is_valid_data(data):
+        # 1. SDK CRC check  — 硬件级校验，最可靠
+        if hasattr(data, 'correct') and not data.correct:
+            return False
+
+        # 2. Type check — 字段必须存在且类型正确
         for attr in ('tau', 'q', 'dq', 'temp', 'merror'):
             val = getattr(data, attr, None)
             if val is None:
@@ -77,6 +86,12 @@ class MotorRotatesNode(Node):
                     return False
             elif not isinstance(val, (int, float)):
                 return False
+
+        # 3. All-zero rejection — RS485通信失败时sendRecv返回全零但无异常
+        if float(data.q) == 0.0 and float(data.dq) == 0.0 \
+           and float(data.tau) == 0.0 and float(data.temp) == 0:
+            return False
+
         return True
 
     def _fill_default_state(self):
@@ -115,13 +130,25 @@ class MotorRotatesNode(Node):
                         state.temp[gi] = float(port['data'].temp)
                         state.merror[gi] = int(port['data'].merror)
                         self.seen[gi] = True
+                        self.consecutive_failures[gi] = 0
+                    else:
+                        self.consecutive_failures[gi] += 1
+                        if self.consecutive_failures[gi] == self.max_consecutive_failures:
+                            self.get_logger().warn(
+                                f'  M{gi:02d} on {port["path"]}: '
+                                f'{self.max_consecutive_failures} consecutive CRC/fmt failures')
                 except Exception:
-                    pass
+                    self.consecutive_failures[gi] += 1
 
         self.state_pub.publish(state)
         self._update_display(state)
 
     def _update_display(self, state):
+        now = self.get_clock().now().nanoseconds * 1e-9
+        if now - self._last_display_time < self._display_interval:
+            return
+        self._last_display_time = now
+
         import shutil
         term_w = shutil.get_terminal_size((120, 24)).columns
 
@@ -134,13 +161,21 @@ class MotorRotatesNode(Node):
         for i in active_indices:
             port_idx = i // MOTORS_PER_PORT
             port_ok = self.ports[port_idx]['active']
-            flag = ' ' if (port_ok and state.merror[i] != -1) else '*'
+            if not port_ok:
+                flag = 'X'
+            elif self.consecutive_failures[i] > 0:
+                flag = '?'
+            elif state.merror[i] == -1:
+                flag = '*'
+            else:
+                flag = ' '
             line = (f"{flag}M{i:02d} "
                     f"cmd={self.cmd_q[i]/ratio:+7.3f} "
                     f"real={state.q[i]/ratio:+7.3f} "
                     f"dq={state.dq[i]/ratio:+7.3f} "
                     f"tau={state.tau[i]:+6.2f} "
-                    f"err={state.merror[i]:2d}")
+                    f"err={state.merror[i]:2d}"
+                    f"{' FAIL'+str(self.consecutive_failures[i]) if self.consecutive_failures[i] > 0 else ''}")
             lines.append(line[:term_w - 1])
 
         if not self._display_ready:
