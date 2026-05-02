@@ -5,7 +5,6 @@ from interface_type.msg import MotorCommand, MotorState, MotorPd
 from unitree_actuator_sdk import *
 
 
-# 4 legs, each a serial port with 3 motors (IDs 0,1,2)
 PORTS = [
     {'path': '/dev/ttyUSB0', 'base': 0},
     {'path': '/dev/ttyUSB1', 'base': 3},
@@ -40,22 +39,28 @@ class MotorRotatesNode(Node):
                 port['cmd'].motorType = MotorType.GO_M8010_6
                 port['data'].motorType = MotorType.GO_M8010_6
                 port['active'] = True
-                self.get_logger().info(f'  {cfg["path"]} -> motors {cfg["base"]}-{cfg["base"]+2}')
+                self.get_logger().info(
+                    f'  {cfg["path"]} -> motors {cfg["base"]}-{cfg["base"]+2}')
             except Exception as e:
                 self.get_logger().warn(f'  {cfg["path"]} unavailable: {e}')
             self.ports.append(port)
 
         if not any(p['active'] for p in self.ports):
-            self.get_logger().error('No serial ports available — motor driver is idle')
+            self.get_logger().error(
+                'No serial ports available — motor driver is idle')
 
         self.kp = [0.0] * TOTAL_MOTORS
         self.kd = [0.0] * TOTAL_MOTORS
+        self.seen = [False] * TOTAL_MOTORS
+        self.cmd_q = [0.0] * TOTAL_MOTORS
+        self._display_ready = False
 
         self.cmd_sub = self.create_subscription(
             MotorCommand, 'motor_command', self.command_callback, 10)
         self.pd_sub = self.create_subscription(
             MotorPd, 'motor_pd', self.pd_callback, 10)
-        self.state_pub = self.create_publisher(MotorState, 'motor_state', 10)
+        self.state_pub = self.create_publisher(
+            MotorState, 'motor_state', 10)
 
     def pd_callback(self, msg):
         self.kp = list(msg.kp)
@@ -86,13 +91,14 @@ class MotorRotatesNode(Node):
     def command_callback(self, msg):
         state = self._fill_default_state()
 
+        for i in range(TOTAL_MOTORS):
+            self.cmd_q[i] = msg.q[i]
+
         for port in self.ports:
             if not port['active']:
                 continue
-
             for local_id in range(MOTORS_PER_PORT):
                 gi = port['base'] + local_id
-
                 port['cmd'].id = msg.id[gi]
                 port['cmd'].mode = self.motor_mode
                 port['cmd'].q = msg.q[gi]
@@ -100,7 +106,6 @@ class MotorRotatesNode(Node):
                 port['cmd'].kd = self.kd[gi]
                 port['cmd'].dq = msg.dq[gi]
                 port['cmd'].tau = msg.tau[gi]
-
                 try:
                     port['serial'].sendRecv(port['cmd'], port['data'])
                     if self._is_valid_data(port['data']):
@@ -109,10 +114,43 @@ class MotorRotatesNode(Node):
                         state.dq[gi] = float(port['data'].dq)
                         state.temp[gi] = float(port['data'].temp)
                         state.merror[gi] = int(port['data'].merror)
+                        self.seen[gi] = True
                 except Exception:
                     pass
 
         self.state_pub.publish(state)
+        self._update_display(state)
+
+    def _update_display(self, state):
+        import shutil
+        term_w = shutil.get_terminal_size((120, 24)).columns
+
+        active_indices = [i for i in range(TOTAL_MOTORS) if self.seen[i]]
+        if not active_indices:
+            return
+
+        ratio = queryGearRatio(MotorType.GO_M8010_6)
+        lines = []
+        for i in active_indices:
+            port_idx = i // MOTORS_PER_PORT
+            port_ok = self.ports[port_idx]['active']
+            flag = ' ' if (port_ok and state.merror[i] != -1) else '*'
+            line = (f"{flag}M{i:02d} "
+                    f"cmd={self.cmd_q[i]/ratio:+7.3f} "
+                    f"real={state.q[i]/ratio:+7.3f} "
+                    f"dq={state.dq[i]/ratio:+7.3f} "
+                    f"tau={state.tau[i]:+6.2f} "
+                    f"err={state.merror[i]:2d}")
+            lines.append(line[:term_w - 1])
+
+        if not self._display_ready:
+            print('\n' * (len(lines) - 1))
+            self._display_ready = True
+
+        print(f"\033[{len(lines)}A", end='')
+        for line in lines:
+            print(f"\033[K{line}")
+        print('\033[J', end='', flush=True)
 
     def __del__(self):
         ports = getattr(self, 'ports', [])

@@ -15,6 +15,7 @@ def generate_launch_description():
         executable='motor_controller',
         name='motor_controller',
         output='screen',
+        parameters=[{'trajectory_duration': 1.0}],
     )
 
     return LaunchDescription([
