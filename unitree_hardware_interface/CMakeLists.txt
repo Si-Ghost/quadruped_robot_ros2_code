@@ -80,7 +80,7 @@ install(PROGRAMS scripts/send_trajectory.py
 )
 
 pluginlib_export_plugin_description_file(
-  hardware_interface ${CMAKE_CURRENT_SOURCE_DIR}/unitree_hardware_interface.xml
+  hardware_interface unitree_hardware_interface.xml
 )
 
 ament_export_dependencies(
