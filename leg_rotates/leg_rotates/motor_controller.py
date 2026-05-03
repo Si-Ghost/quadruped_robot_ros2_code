@@ -161,6 +161,8 @@ class MotorControllerNode(Node):
                     f'Init complete: {active}/{TOTAL_MOTORS} motors, '
                     f'trajectory {self.traj_duration:.1f}s')
                 self._start_trajectories(now)
+            else:
+                return  # 初始化未完成，不发指令，电机保持当前位置
 
         cmd = MotorCommand()
         cmd.id = [i % 3 for i in range(TOTAL_MOTORS)]
@@ -168,7 +170,7 @@ class MotorControllerNode(Node):
         cmd.dq = [0.0] * TOTAL_MOTORS
         cmd.tau = [0.0] * TOTAL_MOTORS
 
-        if self.init_done and self.traj_start_time is not None:
+        if self.traj_start_time is not None:
             elapsed = now - self.traj_start_time
 
             for i in range(TOTAL_MOTORS):
