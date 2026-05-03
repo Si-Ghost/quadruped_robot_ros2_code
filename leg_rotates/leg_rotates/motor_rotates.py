@@ -88,8 +88,19 @@ class MotorRotatesNode(Node):
         self.kp = list(msg.kp)
         self.kd = list(msg.kd)
 
-    @staticmethod
-    def _is_valid_data(data):
+    _debug_attrs_logged = False
+
+    @classmethod
+    def _is_valid_data(cls, data):
+        # 一次性调试：打印 MotorData 所有属性，确认 correct 字段是否可用
+        if not cls._debug_attrs_logged:
+            cls._debug_attrs_logged = True
+            attrs = [a for a in dir(data) if not a.startswith('_')]
+            has_correct = hasattr(data, 'correct')
+            correct_val = getattr(data, 'correct', 'N/A')
+            print(f'\n[MotorData attrs] correct={correct_val}, hasattr={has_correct}')
+            print(f'[MotorData attrs] public fields: {attrs}')
+
         # 1. SDK CRC check — 硬件级校验，最可靠
         if hasattr(data, 'correct') and not data.correct:
             return False
