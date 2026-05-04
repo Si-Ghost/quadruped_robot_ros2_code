@@ -1,6 +1,7 @@
 #ifndef UNITREE_HARDWARE_INTERFACE__UNITREE_HARDWARE_INTERFACE_HPP
 #define UNITREE_HARDWARE_INTERFACE__UNITREE_HARDWARE_INTERFACE_HPP
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -31,6 +32,11 @@ struct MotorPort
   std::vector<MotorCmd>    cmds;           // 3 per port
   std::vector<MotorData>   data;           // 3 per port
   bool                     active = false;
+
+  // health tracking
+  int  consecutive_failures = 0;
+  bool suspended = false;
+  int  suspended_at_cycle = 0;
 };
 
 class UnitreeHardwareInterface : public hardware_interface::SystemInterface
@@ -89,7 +95,11 @@ private:
   int    timeout_us_ = 20000;
 
   bool   initialized_ = false;
+  int    cycle_count_ = 0;
   std::mutex cmd_mutex_;
+
+  static constexpr int SUSPEND_AFTER_FAILURES = 10;
+  static constexpr int PROBE_INTERVAL_CYCLES  = 100;  // ~2s @200Hz
 };
 
 }  // namespace unitree_hardware_interface

@@ -9,13 +9,6 @@ def generate_launch_description():
         executable='motor_rotates',
         name='motor_rotates',
         output='screen',
-    )
-
-    motor_controller_node = Node(
-        package='leg_rotates',
-        executable='motor_controller',
-        name='motor_controller',
-        output='screen',
         parameters=[{'trajectory_duration': 1.0}],
     )
 
@@ -26,6 +19,5 @@ def generate_launch_description():
 
     return LaunchDescription([
         motor_rotates_node,
-        motor_controller_node,
         bag_record,
     ])
