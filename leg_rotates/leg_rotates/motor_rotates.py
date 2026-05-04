@@ -232,8 +232,7 @@ class MotorRotatesNode(Node):
                 self.get_logger().info(
                     f'  M{i:02d} traj: {q_start:.1f} -> {q_end:.1f} '
                     f'({self.traj_duration:.1f}s)')
-                # 立即把 cmd 设为初始位置，下一轮 sendRecv 时电机不会跳
-                self._set_cmd(i, q_start, 0.0)
+                pass  # next tick sends q_start from trajectory — no jump
 
         self.traj_start_time = now
         active = sum(1 for q in self.q_ini if q is not None)
