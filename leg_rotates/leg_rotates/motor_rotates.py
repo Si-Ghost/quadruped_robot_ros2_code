@@ -9,12 +9,12 @@ from unitree_actuator_sdk import *
 
 PORTS = [
     {'path': '/dev/ttyUSB0', 'base': 0},
-    {'path': '/dev/ttyUSB1', 'base': 3},
-    {'path': '/dev/ttyUSB2', 'base': 6},
-    {'path': '/dev/ttyUSB3', 'base': 9},
+    # {'path': '/dev/ttyUSB1', 'base': 3},
+    # {'path': '/dev/ttyUSB2', 'base': 6},
+    # {'path': '/dev/ttyUSB3', 'base': 9},
 ]
 MOTORS_PER_PORT = 3
-TOTAL_MOTORS = 12
+TOTAL_MOTORS = 3
 
 
 class QuinticTrajectory:
@@ -118,12 +118,17 @@ class MotorRotatesNode(Node):
         self._display_ready = False
         self._last_display = 0.0
 
+        # ── 频率测量 ──────────────────────────────────────────
+        self._target_period = 0.002   # 目标周期 (s)，改这里调频率
+        self._tick_times = []         # 最近 N 次 tick 时间戳
+        self._freq_actual = 0.0       # 实际频率
+
         # ── ROS 接口 ──────────────────────────────────────────
         self.pd_sub = self.create_subscription(
             MotorPd, 'motor_pd', self.pd_callback, 10)
         self.state_pub = self.create_publisher(
             MotorState, 'motor_state', 10)
-        self.control_timer = self.create_timer(0.02, self.tick)
+        self.control_timer = self.create_timer(self._target_period, self.tick)
 
         # ── CSV 记录 ──────────────────────────────────────────
         self._csv_path = '/tmp/motor_log.csv'
@@ -148,8 +153,20 @@ class MotorRotatesNode(Node):
 
     def tick(self):
         self._cycle_count += 1
-        state = self._empty_state()
         now = self.get_clock().now().nanoseconds * 1e-9
+
+        # 实际频率测量（滑动平均）
+        self._tick_times.append(now)
+        if len(self._tick_times) > 50:  # 保留最近 50 次
+            self._tick_times.pop(0)
+        if len(self._tick_times) >= 2:
+            intervals = [self._tick_times[i] - self._tick_times[i-1]
+                        for i in range(1, len(self._tick_times))]
+            avg = sum(intervals) / len(intervals)
+            if avg > 0:
+                self._freq_actual = 1.0 / avg
+
+        state = self._empty_state()
 
         # 当前周期的指令值
         if self.traj_start_time is not None:
@@ -353,7 +370,9 @@ class MotorRotatesNode(Node):
         if alive:     parts.append(f'{alive} OK')
         if suspended: parts.append(f'{suspended} suspended')
         if dead:      parts.append(f'{dead} dead')
-        lines.append(f'--- {", ".join(parts) or "no ports"} ---')
+        target_hz = 1.0 / self._target_period if self._target_period > 0 else 0
+        lines.append(f'--- {", ".join(parts) or "no ports"} | '
+                     f'actual={self._freq_actual:.0f}Hz target={target_hz:.0f}Hz ---')
 
         if not self._display_ready:
             print('\n' * max(len(lines) - 1, 0))
