@@ -130,6 +130,15 @@ UnitreeHardwareInterface::on_activate(const rclcpp_lifecycle::State &)
   // Now set actual kp/kd so motors hold position
   set_kp_kd(kp_config_, kd_config_);
 
+  // Fill cmd.q with captured positions — first read() must not drive motors to 0
+  for (auto & port : ports_) {
+    if (!port.active) continue;
+    for (int i = 0; i < MOTORS_PER_PORT; i++) {
+      int gi = port.base + i;
+      port.cmds[i].q = hw_commands_pos_[gi] * gear_ratio_;
+    }
+  }
+
   initialized_ = true;
   RCLCPP_INFO(rclcpp::get_logger("UnitreeHardwareInterface"),
               "on_activate complete — %ld/%d ports active", active, PORTS);
@@ -199,28 +208,51 @@ UnitreeHardwareInterface::read(const rclcpp::Time &, const rclcpp::Duration &)
 {
   if (!initialized_) return hardware_interface::return_type::OK;
 
+  cycle_count_++;
+
   std::vector<std::future<void>> futures;
 
   for (auto & port : ports_) {
     if (!port.active) continue;
 
+    // Probe suspended ports periodically
+    if (port.suspended) {
+      if (cycle_count_ - port.suspended_at_cycle < PROBE_INTERVAL_CYCLES)
+        continue;
+      port.suspended = false;
+    }
+
     futures.push_back(std::async(std::launch::async, [&port, this]() {
+      bool port_ok = false;
       try {
-        port.serial->sendRecv(port.cmds, port.data);
-
-        for (int i = 0; i < MOTORS_PER_PORT; i++) {
-          if (!port.data[i].correct) continue;
-
-          int gi = port.base + i;
-          hw_positions_[gi]  = port.data[i].q  / gear_ratio_;
-          hw_velocities_[gi] = port.data[i].dq / gear_ratio_;
-          hw_efforts_[gi]    = port.data[i].tau * gear_ratio_;
+        bool ok = port.serial->sendRecv(port.cmds, port.data);
+        if (ok) {
+          int valid = 0;
+          for (int i = 0; i < MOTORS_PER_PORT; i++) {
+            if (!port.data[i].correct) continue;
+            valid++;
+            int gi = port.base + i;
+            hw_positions_[gi]  = port.data[i].q  / gear_ratio_;
+            hw_velocities_[gi] = port.data[i].dq / gear_ratio_;
+            hw_efforts_[gi]    = port.data[i].tau * gear_ratio_;
+          }
+          if (valid > 0) port_ok = true;
         }
-      } catch (const std::exception & e) {
-        RCLCPP_WARN_THROTTLE(rclcpp::get_logger("UnitreeHardwareInterface"),
-                             *rclcpp::Clock::make_shared(), 5000,
-                             "sendRecv error on %s: %s",
-                             port.path.c_str(), e.what());
+      } catch (...) { /* port_ok stays false */ }
+
+      if (port_ok) {
+        port.consecutive_failures = 0;
+      } else {
+        port.consecutive_failures++;
+        if (port.consecutive_failures >= SUSPEND_AFTER_FAILURES) {
+          if (!port.suspended) {
+            RCLCPP_WARN(rclcpp::get_logger("UnitreeHardwareInterface"),
+                        "Suspending %s after %d failures",
+                        port.path.c_str(), port.consecutive_failures);
+          }
+          port.suspended = true;
+          port.suspended_at_cycle = cycle_count_;
+        }
       }
     }));
   }
@@ -241,7 +273,7 @@ UnitreeHardwareInterface::write(const rclcpp::Time &, const rclcpp::Duration &)
   double kd_r = kd_config_ / (gear_ratio_ * gear_ratio_);
 
   for (auto & port : ports_) {
-    if (!port.active) continue;
+    if (!port.active || port.suspended) continue;
 
     for (int i = 0; i < MOTORS_PER_PORT; i++) {
       int gi = port.base + i;

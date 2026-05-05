@@ -20,8 +20,8 @@
 namespace unitree_hardware_interface
 {
 
-static constexpr int TOTAL_MOTORS  = 12;
-static constexpr int PORTS         = 4;
+static constexpr int TOTAL_MOTORS  = 3;   // TODO: restore to 12
+static constexpr int PORTS         = 1;   // TODO: restore to 4
 static constexpr int MOTORS_PER_PORT = 3;
 
 struct MotorPort
@@ -95,7 +95,7 @@ private:
   int    timeout_us_ = 20000;
 
   bool   initialized_ = false;
-  int    cycle_count_ = 0;
+  std::atomic<int> cycle_count_{0};
   std::mutex cmd_mutex_;
 
   static constexpr int SUSPEND_AFTER_FAILURES = 10;

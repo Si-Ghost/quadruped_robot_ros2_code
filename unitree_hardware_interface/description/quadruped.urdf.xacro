@@ -25,26 +25,16 @@
 
   <link name="base_link"/>
 
+  <!-- TODO: restore motors 3-11 -->
   <xacro:motor_joint index="0"/>
   <xacro:motor_joint index="1"/>
   <xacro:motor_joint index="2"/>
-  <xacro:motor_joint index="3"/>
-  <xacro:motor_joint index="4"/>
-  <xacro:motor_joint index="5"/>
-  <xacro:motor_joint index="6"/>
-  <xacro:motor_joint index="7"/>
-  <xacro:motor_joint index="8"/>
-  <xacro:motor_joint index="9"/>
-  <xacro:motor_joint index="10"/>
-  <xacro:motor_joint index="11"/>
 
   <ros2_control name="UnitreeHardwareInterface" type="system">
     <hardware>
       <plugin>unitree_hardware_interface/UnitreeHardwareInterface</plugin>
       <param name="port_0">/dev/ttyUSB0:0</param>
-      <param name="port_1">/dev/ttyUSB1:3</param>
-      <param name="port_2">/dev/ttyUSB2:6</param>
-      <param name="port_3">/dev/ttyUSB3:9</param>
+      <!-- TODO: restore port_1/2/3 -->
       <param name="kp">0.4</param>
       <param name="kd">0.01</param>
       <param name="baudrate">4000000</param>
@@ -53,15 +43,7 @@
     <xacro:ros_joint index="0"/>
     <xacro:ros_joint index="1"/>
     <xacro:ros_joint index="2"/>
-    <xacro:ros_joint index="3"/>
-    <xacro:ros_joint index="4"/>
-    <xacro:ros_joint index="5"/>
-    <xacro:ros_joint index="6"/>
-    <xacro:ros_joint index="7"/>
-    <xacro:ros_joint index="8"/>
-    <xacro:ros_joint index="9"/>
-    <xacro:ros_joint index="10"/>
-    <xacro:ros_joint index="11"/>
+    <!-- TODO: restore joints 3-11 -->
   </ros2_control>
 
 </robot>
