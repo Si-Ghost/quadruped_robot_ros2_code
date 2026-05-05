@@ -116,6 +116,11 @@ class MotorRotatesNode(Node):
             MotorState, 'motor_state', 10)
         self.control_timer = self.create_timer(0.02, self.tick)
 
+        # ── CSV 记录 ──────────────────────────────────────────
+        self._csv_path = '/tmp/motor_log.csv'
+        self._csv_file = open(self._csv_path, 'w')
+        self._csv_file.write('timestamp,motor,q,dq\n')
+
         # 发布初始增益
         self._publish_pd()
 
@@ -190,6 +195,13 @@ class MotorRotatesNode(Node):
         # ── step 3: 发布 + 显示 ──────────────────────────────
         self.state_pub.publish(state)
         self._update_display(state)
+
+        # ── CSV 记录（仅已连接的电机）────────────────────────
+        for i in range(TOTAL_MOTORS):
+            if self.seen[i]:
+                self._csv_file.write(
+                    f'{now:.6f},{i},{state.q[i]:.6f},{state.dq[i]:.6f}\n')
+        self._csv_file.flush()
 
     # ── 通信 ──────────────────────────────────────────────────
 
@@ -364,6 +376,9 @@ class MotorRotatesNode(Node):
                 except Exception:
                     break
         self.get_logger().info('All motors stopped')
+        csv = getattr(self, '_csv_file', None)
+        if csv:
+            csv.close()
 
 
 def main(args=None):
