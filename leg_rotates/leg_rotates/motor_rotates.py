@@ -88,7 +88,16 @@ class MotorRotatesNode(Node):
         self.declare_parameter('trajectory_duration', 1.0)
         self.traj_duration = self.get_parameter('trajectory_duration').value
         deg_to_raw = 3.14159 / 180.0 * self.gear_ratio
-        self.target_degrees = [-10.0] * TOTAL_MOTORS
+        self.target_degrees =   self.target_degrees = [
+        # leg 0 (USB0)
+        90,  45,  -10.0,
+        # leg 1 (USB1)
+        -5.0,  -10.0,  -10.0,
+        # leg 2 (USB2)
+        -5.0,  -10.0,  -10.0,
+        # leg 3 (USB3)
+        -5.0,  -10.0,  -10.0,
+        ]
         self.target_offsets = [d * deg_to_raw for d in self.target_degrees]
 
         # ── 状态 ──────────────────────────────────────────────
