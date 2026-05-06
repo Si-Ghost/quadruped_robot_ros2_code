@@ -20,17 +20,18 @@
 namespace unitree_hardware_interface
 {
 
-static constexpr int TOTAL_MOTORS  = 3;   // TODO: restore to 12
-static constexpr int PORTS         = 1;   // TODO: restore to 4
-static constexpr int MOTORS_PER_PORT = 3;
+static constexpr int TOTAL_MOTORS  = 4;
+static constexpr int PORTS         = 2;
+static constexpr int MOTORS_PER_PORT = 3;   // max slots per port
 
 struct MotorPort
 {
   std::string              path;
   int                      base;           // global index offset
+  int                      motor_count = 0;// actual motors on this port
   std::unique_ptr<SerialPort> serial;
-  std::vector<MotorCmd>    cmds;           // 3 per port
-  std::vector<MotorData>   data;           // 3 per port
+  std::vector<MotorCmd>    cmds;           // up to MOTORS_PER_PORT
+  std::vector<MotorData>   data;
   bool                     active = false;
 
   // health tracking

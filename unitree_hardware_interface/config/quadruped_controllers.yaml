@@ -1,6 +1,6 @@
 controller_manager:
   ros__parameters:
-    update_rate: 200
+    update_rate: 333
 
     joint_state_broadcaster:
       type: joint_state_broadcaster/JointStateBroadcaster
@@ -18,7 +18,7 @@ joint_trajectory_controller:
       - joint_0
       - joint_1
       - joint_2
-      # TODO: restore joints 3-11
+      - joint_3
     command_interfaces:
       - position
     state_interfaces:

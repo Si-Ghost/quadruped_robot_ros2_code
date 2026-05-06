@@ -41,13 +41,19 @@ UnitreeHardwareInterface::on_init(const hardware_interface::HardwareInfo & info)
 
     port.cmds.resize(MOTORS_PER_PORT);
     port.data.resize(MOTORS_PER_PORT);
+
+    // motor_count: how many motors belong to this port (min of slots and total remaining)
+    int remaining = TOTAL_MOTORS - port.base;
+    port.motor_count = std::min(MOTORS_PER_PORT, remaining);
+
     ports_.push_back(std::move(port));
 
     RCLCPP_INFO(rclcpp::get_logger("UnitreeHardwareInterface"),
-                "Configured port %s → motors %d–%d",
+                "Configured port %s → motors %d–%d (%d motors)",
                 ports_.back().path.c_str(),
                 ports_.back().base,
-                ports_.back().base + MOTORS_PER_PORT - 1);
+                ports_.back().base + ports_.back().motor_count - 1,
+                ports_.back().motor_count);
   }
 
   // 12 joints × 3 state interfaces
@@ -115,7 +121,7 @@ UnitreeHardwareInterface::on_activate(const rclcpp_lifecycle::State &)
     if (!port.active) continue;
     try {
       port.serial->sendRecv(port.cmds, port.data);
-      for (int i = 0; i < MOTORS_PER_PORT; i++) {
+      for (int i = 0; i < port.motor_count; i++) {
         int gi = port.base + i;
         if (port.data[i].correct) {
           hw_positions_[gi]    = port.data[i].q  / gear_ratio_;
@@ -133,7 +139,7 @@ UnitreeHardwareInterface::on_activate(const rclcpp_lifecycle::State &)
   // Fill cmd.q with captured positions — first read() must not drive motors to 0
   for (auto & port : ports_) {
     if (!port.active) continue;
-    for (int i = 0; i < MOTORS_PER_PORT; i++) {
+    for (int i = 0; i < port.motor_count; i++) {
       int gi = port.base + i;
       port.cmds[i].q = hw_commands_pos_[gi] * gear_ratio_;
     }
@@ -153,7 +159,7 @@ UnitreeHardwareInterface::on_deactivate(const rclcpp_lifecycle::State &)
   // Stop all motors
   for (auto & port : ports_) {
     if (!port.active) continue;
-    for (int i = 0; i < MOTORS_PER_PORT; i++) {
+    for (int i = 0; i < port.motor_count; i++) {
       port.cmds[i].q   = 0.0;
       port.cmds[i].dq  = 0.0;
       port.cmds[i].tau = 0.0;
@@ -215,7 +221,6 @@ UnitreeHardwareInterface::read(const rclcpp::Time &, const rclcpp::Duration &)
   for (auto & port : ports_) {
     if (!port.active) continue;
 
-    // Probe suspended ports periodically
     if (port.suspended) {
       if (cycle_count_ - port.suspended_at_cycle < PROBE_INTERVAL_CYCLES)
         continue;
@@ -226,7 +231,7 @@ UnitreeHardwareInterface::read(const rclcpp::Time &, const rclcpp::Duration &)
       bool port_ok = false;
       try {
         int valid = 0;
-        for (int i = 0; i < MOTORS_PER_PORT; i++) {
+        for (int i = 0; i < port.motor_count; i++) {
           bool ok = port.serial->sendRecv(&port.cmds[i], &port.data[i]);
           if (ok && port.data[i].correct) {
             valid++;
@@ -272,7 +277,7 @@ UnitreeHardwareInterface::write(const rclcpp::Time &, const rclcpp::Duration &)
   for (auto & port : ports_) {
     if (!port.active || port.suspended) continue;
 
-    for (int i = 0; i < MOTORS_PER_PORT; i++) {
+    for (int i = 0; i < port.motor_count; i++) {
       int gi = port.base + i;
 
       port.cmds[i].motorType = MotorType::GO_M8010_6;
@@ -294,7 +299,7 @@ UnitreeHardwareInterface::write(const rclcpp::Time &, const rclcpp::Duration &)
 void UnitreeHardwareInterface::init_cmd_buffers()
 {
   for (auto & port : ports_) {
-    for (int i = 0; i < MOTORS_PER_PORT; i++) {
+    for (int i = 0; i < port.motor_count; i++) {
       port.cmds[i].motorType = MotorType::GO_M8010_6;
       port.data[i].motorType = MotorType::GO_M8010_6;
       port.cmds[i].id        = static_cast<unsigned short>(i);
@@ -311,7 +316,7 @@ void UnitreeHardwareInterface::init_cmd_buffers()
 void UnitreeHardwareInterface::set_kp_kd(double kp_out, double kd_out)
 {
   for (auto & port : ports_) {
-    for (int i = 0; i < MOTORS_PER_PORT; i++) {
+    for (int i = 0; i < port.motor_count; i++) {
       port.cmds[i].kp = static_cast<float>(kp_out);
       port.cmds[i].kd = static_cast<float>(kd_out);
     }
