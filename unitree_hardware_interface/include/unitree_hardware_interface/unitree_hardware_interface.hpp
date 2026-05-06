@@ -20,9 +20,9 @@
 namespace unitree_hardware_interface
 {
 
-static constexpr int TOTAL_MOTORS  = 3;   // TODO: restore to 12
-static constexpr int PORTS         = 1;   // TODO: restore to 4
-static constexpr int MOTORS_PER_PORT = 3;
+static constexpr int TOTAL_MOTORS  = 1;   // 1-motor test
+static constexpr int PORTS         = 1;
+static constexpr int MOTORS_PER_PORT = 1;   // 1-motor test
 
 struct MotorPort
 {

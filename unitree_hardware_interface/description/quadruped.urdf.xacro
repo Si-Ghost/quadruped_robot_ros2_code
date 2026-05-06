@@ -25,10 +25,8 @@
 
   <link name="base_link"/>
 
-  <!-- TODO: restore motors 3-11 -->
+  <!-- 1-motor test -->
   <xacro:motor_joint index="0"/>
-  <xacro:motor_joint index="1"/>
-  <xacro:motor_joint index="2"/>
 
   <ros2_control name="UnitreeHardwareInterface" type="system">
     <hardware>
@@ -40,10 +38,8 @@
       <param name="baudrate">4000000</param>
       <param name="timeout_us">20000</param>
     </hardware>
+    <!-- 1-motor test -->
     <xacro:ros_joint index="0"/>
-    <xacro:ros_joint index="1"/>
-    <xacro:ros_joint index="2"/>
-    <!-- TODO: restore joints 3-11 -->
   </ros2_control>
 
 </robot>
