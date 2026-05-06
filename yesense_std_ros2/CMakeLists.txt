@@ -20,7 +20,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
-find_package(serial REQUIRED)
+find_library(SERIAL_LIB serial PATHS /usr/lib/aarch64-linux-gnu /usr/lib REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
@@ -42,13 +42,16 @@ add_executable(yesense_node_publisher
 				src/yesense_decoder.cpp
 				)
 
-ament_target_dependencies(yesense_node_publisher rclcpp std_msgs sensor_msgs nav_msgs geometry_msgs visualization_msgs yesense_interface serial)
+ament_target_dependencies(yesense_node_publisher rclcpp std_msgs sensor_msgs nav_msgs geometry_msgs visualization_msgs yesense_interface)
 #ament_target_dependencies(yesense_node_publisher rclcpp std_msgs)
 
 
 add_executable(yesense_node_subscriber  src/yesense_node_subscriber_example.cpp)
 				
-ament_target_dependencies(yesense_node_subscriber rclcpp std_msgs sensor_msgs nav_msgs geometry_msgs visualization_msgs yesense_interface serial)				
+ament_target_dependencies(yesense_node_subscriber rclcpp std_msgs sensor_msgs nav_msgs geometry_msgs visualization_msgs yesense_interface)
+
+target_link_libraries(yesense_node_publisher ${SERIAL_LIB})
+target_link_libraries(yesense_node_subscriber ${SERIAL_LIB})
 
 
 install(DIRECTORY launch
