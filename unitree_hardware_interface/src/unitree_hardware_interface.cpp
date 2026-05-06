@@ -225,19 +225,18 @@ UnitreeHardwareInterface::read(const rclcpp::Time &, const rclcpp::Duration &)
     futures.push_back(std::async(std::launch::async, [&port, this]() {
       bool port_ok = false;
       try {
-        bool ok = port.serial->sendRecv(port.cmds, port.data);
-        if (ok) {
-          int valid = 0;
-          for (int i = 0; i < MOTORS_PER_PORT; i++) {
-            if (!port.data[i].correct) continue;
+        int valid = 0;
+        for (int i = 0; i < MOTORS_PER_PORT; i++) {
+          bool ok = port.serial->sendRecv(&port.cmds[i], &port.data[i]);
+          if (ok && port.data[i].correct) {
             valid++;
             int gi = port.base + i;
             hw_positions_[gi]  = port.data[i].q  / gear_ratio_;
             hw_velocities_[gi] = port.data[i].dq / gear_ratio_;
             hw_efforts_[gi]    = port.data[i].tau * gear_ratio_;
           }
-          if (valid > 0) port_ok = true;
         }
+        if (valid > 0) port_ok = true;
       } catch (...) { /* port_ok stays false */ }
 
       if (port_ok) {
@@ -269,9 +268,7 @@ UnitreeHardwareInterface::write(const rclcpp::Time &, const rclcpp::Duration &)
 
   std::lock_guard<std::mutex> lock(cmd_mutex_);
 
-  double kp_r = kp_config_ / (gear_ratio_ * gear_ratio_);
-  double kd_r = kd_config_ / (gear_ratio_ * gear_ratio_);
-
+  // kp/kd 是电机原始坐标系的值，不做 gear_ratio 换算（与 Python 版一致）
   for (auto & port : ports_) {
     if (!port.active || port.suspended) continue;
 
@@ -284,8 +281,8 @@ UnitreeHardwareInterface::write(const rclcpp::Time &, const rclcpp::Duration &)
       port.cmds[i].q         = hw_commands_pos_[gi] * gear_ratio_;
       port.cmds[i].dq        = hw_commands_vel_[gi] * gear_ratio_;
       port.cmds[i].tau       = hw_commands_eff_[gi] / gear_ratio_;
-      port.cmds[i].kp        = static_cast<float>(kp_r);
-      port.cmds[i].kd        = static_cast<float>(kd_r);
+      port.cmds[i].kp        = static_cast<float>(kp_config_);
+      port.cmds[i].kd        = static_cast<float>(kd_config_);
     }
   }
 
@@ -313,13 +310,10 @@ void UnitreeHardwareInterface::init_cmd_buffers()
 
 void UnitreeHardwareInterface::set_kp_kd(double kp_out, double kd_out)
 {
-  double kp_r = kp_out / (gear_ratio_ * gear_ratio_);
-  double kd_r = kd_out / (gear_ratio_ * gear_ratio_);
-
   for (auto & port : ports_) {
     for (int i = 0; i < MOTORS_PER_PORT; i++) {
-      port.cmds[i].kp = static_cast<float>(kp_r);
-      port.cmds[i].kd = static_cast<float>(kd_r);
+      port.cmds[i].kp = static_cast<float>(kp_out);
+      port.cmds[i].kd = static_cast<float>(kd_out);
     }
   }
 }

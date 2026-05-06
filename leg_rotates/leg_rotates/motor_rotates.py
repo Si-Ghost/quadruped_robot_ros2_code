@@ -14,7 +14,7 @@ PORTS = [
     # {'path': '/dev/ttyUSB3', 'base': 9},
 ]
 MOTORS_PER_PORT = 3
-TOTAL_MOTORS = 3
+TOTAL_MOTORS = 12  # ROS消息固定12元素，不能改
 
 
 class QuinticTrajectory:
