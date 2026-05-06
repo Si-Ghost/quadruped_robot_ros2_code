@@ -16,7 +16,9 @@ joint_trajectory_controller:
   ros__parameters:
     joints:
       - joint_0
-      # 1-motor test
+      - joint_1
+      - joint_2
+      # TODO: restore joints 3-11
     command_interfaces:
       - position
     state_interfaces:
