@@ -110,21 +110,39 @@ UnitreeHardwareInterface::on_activate(const rclcpp_lifecycle::State &)
   // Initialize cmd buffers — kp=kd=0 so motors don't jump on first sendRecv
   init_cmd_buffers();
 
-  // Capture initial positions with zero gains
+  // Capture initial positions with zero gains — retry on CRC fail
   for (auto & port : ports_) {
     if (!port.active) continue;
-    try {
-      port.serial->sendRecv(port.cmds, port.data);
-      for (int i = 0; i < MOTORS_PER_PORT; i++) {
-        int gi = port.base + i;
-        if (port.data[i].correct) {
-          hw_positions_[gi]    = port.data[i].q  / gear_ratio_;
-          hw_velocities_[gi]   = port.data[i].dq / gear_ratio_;
-          hw_efforts_[gi]      = port.data[i].tau * gear_ratio_;
-          hw_commands_pos_[gi] = hw_positions_[gi];
+
+    bool all_ok = false;
+    for (int attempt = 0; attempt < 3 && !all_ok; attempt++) {
+      try {
+        port.serial->sendRecv(port.cmds, port.data);
+        all_ok = true;
+        for (int i = 0; i < MOTORS_PER_PORT; i++) {
+          int gi = port.base + i;
+          if (port.data[i].correct) {
+            hw_positions_[gi]    = port.data[i].q  / gear_ratio_;
+            hw_velocities_[gi]   = port.data[i].dq / gear_ratio_;
+            hw_efforts_[gi]      = port.data[i].tau * gear_ratio_;
+            hw_commands_pos_[gi] = hw_positions_[gi];
+          } else {
+            all_ok = false;
+          }
         }
+        if (!all_ok) {
+          RCLCPP_WARN(rclcpp::get_logger("UnitreeHardwareInterface"),
+                      "%s init read attempt %d had bad CRC, retrying...",
+                      port.path.c_str(), attempt + 1);
+        }
+      } catch (...) {
+        all_ok = false;
       }
-    } catch (...) { /* keep zero defaults */ }
+    }
+    if (!all_ok) {
+      RCLCPP_ERROR(rclcpp::get_logger("UnitreeHardwareInterface"),
+                   "%s failed to read valid positions after 3 attempts", port.path.c_str());
+    }
   }
 
   // Now set actual kp/kd so motors hold position

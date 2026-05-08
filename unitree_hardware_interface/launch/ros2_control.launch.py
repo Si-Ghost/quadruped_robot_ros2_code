@@ -1,7 +1,7 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, TimerAction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, Command
 from launch_ros.actions import Node
@@ -39,11 +39,15 @@ def generate_launch_description():
         output='screen',
     )
 
-    trajectory_spawner = Node(
-        package='controller_manager',
-        executable='spawner',
-        arguments=['joint_trajectory_controller'],
-        output='screen',
+    # 延迟 3 秒启动，等硬件和 broadcaster 数据稳定后再加载
+    trajectory_spawner = TimerAction(
+        period=3.0,
+        actions=[Node(
+            package='controller_manager',
+            executable='spawner',
+            arguments=['joint_trajectory_controller'],
+            output='screen',
+        )],
     )
 
     bag_record = ExecuteProcess(
