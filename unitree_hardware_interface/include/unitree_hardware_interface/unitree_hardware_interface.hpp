@@ -101,6 +101,7 @@ private:
 
   static constexpr int SUSPEND_AFTER_FAILURES = 10;
   static constexpr int PROBE_INTERVAL_CYCLES  = 100;  // ~2s @200Hz
+  static constexpr int STARTUP_GUARD_CYCLES   = 5;    // first ~25ms @200Hz
 };
 
 }  // namespace unitree_hardware_interface

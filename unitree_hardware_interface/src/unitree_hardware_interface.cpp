@@ -154,12 +154,25 @@ UnitreeHardwareInterface::on_activate(const rclcpp_lifecycle::State &)
   // Now set actual kp/kd so motors hold position
   set_kp_kd(kp_config_, kd_config_);
 
-  // Fill cmd.q with captured positions — first read() must not drive motors to 0
+  // Fill cmd.q with captured positions and send immediately —
+  // motors must receive the hold command before the control loop starts,
+  // otherwise they stay at kp=kd=0 and the first read() might send q=0.
   for (auto & port : ports_) {
     if (!port.active) continue;
     for (int i = 0; i < port.motor_count; i++) {
       int gi = port.base + i;
+      if (hw_commands_pos_[gi] == 0.0 && hw_positions_[gi] != 0.0) {
+        // Position read succeeded but command was somehow zeroed — recover
+        hw_commands_pos_[gi] = hw_positions_[gi];
+      }
       port.cmds[i].q = hw_commands_pos_[gi] * gear_ratio_;
+    }
+    // Actually send the hold command to motors *before* the control loop
+    try {
+      port.serial->sendRecv(port.cmds, port.data);
+    } catch (...) {
+      RCLCPP_WARN(rclcpp::get_logger("UnitreeHardwareInterface"),
+                  "%s final hold sendRecv failed", port.path.c_str());
     }
   }
 
@@ -301,7 +314,17 @@ UnitreeHardwareInterface::write(const rclcpp::Time &, const rclcpp::Duration &)
       port.cmds[i].motorType = MotorType::GO_M8010_6;
       port.cmds[i].id        = static_cast<unsigned short>(i);
       port.cmds[i].mode      = static_cast<unsigned short>(motor_mode_);
-      port.cmds[i].q         = hw_commands_pos_[gi] * gear_ratio_;
+
+      // Guard: if controller hasn't set a meaningful command yet
+      // (hw_commands_pos_ is still 0 but motor is at non-zero position),
+      // hold the current motor position instead of rushing to 0.
+      double cmd_pos = hw_commands_pos_[gi];
+      if (cycle_count_ <= STARTUP_GUARD_CYCLES &&
+          cmd_pos == 0.0 && hw_positions_[gi] != 0.0) {
+        cmd_pos = hw_positions_[gi];
+      }
+
+      port.cmds[i].q         = cmd_pos * gear_ratio_;
       port.cmds[i].dq        = hw_commands_vel_[gi] * gear_ratio_;
       port.cmds[i].tau       = hw_commands_eff_[gi] / gear_ratio_;
       port.cmds[i].kp        = static_cast<float>(kp_config_);
