@@ -31,6 +31,7 @@ struct MotorPort
   std::unique_ptr<SerialPort> serial;
   std::vector<MotorCmd>    cmds;           // 3 per port
   std::vector<MotorData>   data;           // 3 per port
+  int                      motor_count = 0;
   bool                     active = false;
 
   // health tracking

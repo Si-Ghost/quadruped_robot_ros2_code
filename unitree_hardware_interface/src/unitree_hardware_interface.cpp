@@ -119,9 +119,6 @@ UnitreeHardwareInterface::on_activate(const rclcpp_lifecycle::State &)
   // Capture initial positions with zero gains — retry on CRC fail
   for (auto & port : ports_) {
     if (!port.active) continue;
-  // Capture initial positions with zero gains — retry on CRC fail
-  for (auto & port : ports_) {
-    if (!port.active) continue;
 
     bool all_ok = false;
     for (int attempt = 0; attempt < 3 && !all_ok; attempt++) {
@@ -138,21 +135,6 @@ UnitreeHardwareInterface::on_activate(const rclcpp_lifecycle::State &)
           } else {
             all_ok = false;
           }
-        }
-        if (!all_ok) {
-          RCLCPP_WARN(rclcpp::get_logger("UnitreeHardwareInterface"),
-                      "%s init read attempt %d had bad CRC, retrying...",
-                      port.path.c_str(), attempt + 1);
-        }
-      } catch (...) {
-        all_ok = false;
-      }
-    }
-    if (!all_ok) {
-      RCLCPP_ERROR(rclcpp::get_logger("UnitreeHardwareInterface"),
-                   "%s failed to read valid positions after 3 attempts", port.path.c_str());
-    }
-  }
         }
         if (!all_ok) {
           RCLCPP_WARN(rclcpp::get_logger("UnitreeHardwareInterface"),

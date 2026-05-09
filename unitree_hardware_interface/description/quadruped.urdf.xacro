@@ -35,7 +35,7 @@
       <plugin>unitree_hardware_interface/UnitreeHardwareInterface</plugin>
       <param name="port_0">/dev/ttyUSB0:0</param>
       <!-- TODO: restore port_1/2/3 -->
-      <param name="kp">0.4</param>
+      <param name="kp">0.7</param>
       <param name="kd">0.01</param>
       <param name="baudrate">4000000</param>
       <param name="timeout_us">20000</param>
