@@ -196,8 +196,10 @@ UnitreeHardwareInterface::on_deactivate(const rclcpp_lifecycle::State &)
       port.cmds[i].kp  = 0.0;
       port.cmds[i].kd  = 0.0;
     }
-    try { port.serial->sendRecv(port.cmds, port.data); }
-    catch (...) {}
+    for (int i = 0; i < port.motor_count; i++) {
+      try { port.serial->sendRecv(&port.cmds[i], &port.data[i]); }
+      catch (...) {}
+    }
   }
 
   for (auto & port : ports_) {
