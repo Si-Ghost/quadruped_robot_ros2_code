@@ -48,7 +48,6 @@ MotorState MotorController::send_command(const MotorCommand& cmd) {
 
     _serial.flush_input();
     _serial.write(packet, SEND_PACKET_SIZE);
-    _serial.flush_output();
     _serial.drain();
 
     if (cmd.motor_id == BROADCAST_ID)
@@ -74,7 +73,6 @@ std::vector<uint8_t> MotorController::send_raw(const std::vector<uint8_t>& packe
 
     _serial.flush_input();
     _serial.write(packet.data(), packet.size());
-    _serial.flush_output();
     _serial.drain();
 
     std::vector<uint8_t> response(RECV_PACKET_SIZE);

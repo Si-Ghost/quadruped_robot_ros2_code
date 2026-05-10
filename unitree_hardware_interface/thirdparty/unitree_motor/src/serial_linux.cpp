@@ -103,7 +103,7 @@ size_t SerialPort::read(uint8_t* buf, size_t len) {
     struct pollfd pfd;
     pfd.fd = _fd;
     pfd.events = POLLIN;
-    int ret = poll(&pfd, 1, 50);  // 50 ms hard cap
+    int ret = poll(&pfd, 1, 2);  // 2 ms hard cap (enough for 4Mbps response)
     if (ret <= 0)
         return 0;
 
