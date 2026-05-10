@@ -9,9 +9,23 @@
 #include <cerrno>
 #include <iostream>
 
-// Linux-specific: struct termios2 for arbitrary baud rates
-#ifndef TCGETS2
-#include <asm/termbits.h>
+// Linux-specific: struct termios2 for arbitrary baud rates.
+// glibc <termios.h> does not expose termios2; <asm/termbits.h> is
+// missing on some architectures (e.g. ARM64).  Define it ourselves.
+#ifndef BOTHER
+struct termios2 {
+    tcflag_t c_iflag;
+    tcflag_t c_oflag;
+    tcflag_t c_cflag;
+    tcflag_t c_lflag;
+    cc_t     c_line;
+    cc_t     c_cc[19];
+    speed_t  c_ispeed;
+    speed_t  c_ospeed;
+};
+#define BOTHER  0x1000
+#define TCGETS2 _IOR('T', 0x2A, struct termios2)
+#define TCSETS2 _IOW('T', 0x2B, struct termios2)
 #endif
 
 namespace unitree_motor {

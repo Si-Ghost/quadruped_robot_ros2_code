@@ -160,7 +160,7 @@ UnitreeHardwareInterface::on_deactivate(const rclcpp_lifecycle::State &)
   for (auto & port : ports_) {
     if (!port.active || !port.controller) continue;
     try {
-      port.controller->stop_all();
+      port.controller->stop();
     } catch (...) {}
     port.controller->close();
     port.active = false;
