@@ -95,7 +95,8 @@ private:
   int    baudrate_   = 4000000;
   int    timeout_us_ = 20000;
 
-  bool   initialized_ = false;
+  bool   initialized_        = false;
+  bool   positions_captured_ = false;
   std::atomic<int> cycle_count_{0};
   std::mutex cmd_mutex_;
 

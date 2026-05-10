@@ -113,68 +113,12 @@ UnitreeHardwareInterface::on_activate(const rclcpp_lifecycle::State &)
     return hardware_interface::CallbackReturn::ERROR;
   }
 
-  // Initialize cmd buffers — kp=kd=0 so motors don't jump on first sendRecv
+  // Initialize cmd buffers — kp=kd=0, position=0.
+  // No serial I/O here.  Initial positions are captured in the first
+  // few cycles of read() which runs in the RT (SCHED_FIFO) thread.
   init_cmd_buffers();
 
-  // Capture initial positions with zero gains — retry on CRC fail
-  for (auto & port : ports_) {
-    if (!port.active) continue;
-
-    bool all_ok = false;
-    for (int attempt = 0; attempt < 3 && !all_ok; attempt++) {
-      all_ok = true;
-      for (int i = 0; i < port.motor_count; i++) {
-        try {
-          bool ok = port.serial->sendRecv(&port.cmds[i], &port.data[i]);
-          if (ok && port.data[i].correct) {
-            int gi = port.base + i;
-            hw_positions_[gi]    = port.data[i].q  / gear_ratio_;
-            hw_velocities_[gi]   = port.data[i].dq / gear_ratio_;
-            hw_efforts_[gi]      = port.data[i].tau * gear_ratio_;
-            hw_commands_pos_[gi] = hw_positions_[gi];
-          } else {
-            all_ok = false;
-          }
-        } catch (...) {
-          all_ok = false;
-        }
-      }
-      if (!all_ok) {
-        RCLCPP_WARN(rclcpp::get_logger("UnitreeHardwareInterface"),
-                    "%s init read attempt %d had bad CRC, retrying...",
-                    port.path.c_str(), attempt + 1);
-      }
-    }
-    if (!all_ok) {
-      RCLCPP_ERROR(rclcpp::get_logger("UnitreeHardwareInterface"),
-                   "%s failed to read valid positions after 3 attempts", port.path.c_str());
-    }
-  }
-
-  // Now set actual kp/kd so motors hold position
-  set_kp_kd(kp_config_, kd_config_);
-
-  // Fill cmd.q with captured positions and send immediately —
-  // motors must receive the hold command before the control loop starts,
-  // otherwise they stay at kp=kd=0 and the first read() might send q=0.
-  for (auto & port : ports_) {
-    if (!port.active) continue;
-    for (int i = 0; i < port.motor_count; i++) {
-      int gi = port.base + i;
-      if (hw_commands_pos_[gi] == 0.0 && hw_positions_[gi] != 0.0) {
-        // Position read succeeded but command was somehow zeroed — recover
-        hw_commands_pos_[gi] = hw_positions_[gi];
-      }
-      port.cmds[i].q = hw_commands_pos_[gi] * gear_ratio_;
-    }
-    // Actually send the hold command to each motor *before* the control loop
-    for (int i = 0; i < port.motor_count; i++) {
-      try {
-        port.serial->sendRecv(&port.cmds[i], &port.data[i]);
-      } catch (...) {}
-    }
-  }
-
+  positions_captured_ = false;
   initialized_ = true;
   RCLCPP_INFO(rclcpp::get_logger("UnitreeHardwareInterface"),
               "on_activate complete — %ld/%d ports active", active, PORTS);
@@ -208,6 +152,7 @@ UnitreeHardwareInterface::on_deactivate(const rclcpp_lifecycle::State &)
   }
 
   initialized_ = false;
+  positions_captured_ = false;
   return hardware_interface::CallbackReturn::SUCCESS;
 }
 
@@ -263,6 +208,7 @@ UnitreeHardwareInterface::read(const rclcpp::Time &, const rclcpp::Duration &)
       bool port_ok = false;
       try {
         int valid = 0;
+        bool all_ok = true;
         for (int i = 0; i < port.motor_count; i++) {
           bool ok = port.serial->sendRecv(&port.cmds[i], &port.data[i]);
           if (ok && port.data[i].correct) {
@@ -271,9 +217,23 @@ UnitreeHardwareInterface::read(const rclcpp::Time &, const rclcpp::Duration &)
             hw_positions_[gi]  = port.data[i].q  / gear_ratio_;
             hw_velocities_[gi] = port.data[i].dq / gear_ratio_;
             hw_efforts_[gi]    = port.data[i].tau * gear_ratio_;
+            // Capture initial position (RT thread — reliable timing)
+            if (!positions_captured_) {
+              hw_commands_pos_[gi] = hw_positions_[gi];
+            }
+          } else {
+            all_ok = false;
           }
         }
         if (valid > 0) port_ok = true;
+
+        // Once all motors on this port respond in one cycle, startup is done
+        if (!positions_captured_ && all_ok && valid == port.motor_count) {
+          positions_captured_ = true;
+          RCLCPP_INFO(rclcpp::get_logger("UnitreeHardwareInterface"),
+                      "%s initial positions captured at cycle %d",
+                      port.path.c_str(), cycle_count_.load());
+        }
       } catch (...) { /* port_ok stays false */ }
 
       if (port_ok) {
@@ -316,20 +276,24 @@ UnitreeHardwareInterface::write(const rclcpp::Time &, const rclcpp::Duration &)
       port.cmds[i].id        = static_cast<unsigned short>(i);
       port.cmds[i].mode      = static_cast<unsigned short>(motor_mode_);
 
-      // Guard: if controller hasn't set a meaningful command yet
-      // (hw_commands_pos_ is still 0 but motor is at non-zero position),
-      // hold the current motor position instead of rushing to 0.
-      double cmd_pos = hw_commands_pos_[gi];
-      if (cycle_count_ <= STARTUP_GUARD_CYCLES &&
-          cmd_pos == 0.0 && hw_positions_[gi] != 0.0) {
-        cmd_pos = hw_positions_[gi];
-      }
+      port.cmds[i].dq  = hw_commands_vel_[gi] * gear_ratio_;
+      port.cmds[i].tau = hw_commands_eff_[gi] / gear_ratio_;
 
-      port.cmds[i].q         = cmd_pos * gear_ratio_;
-      port.cmds[i].dq        = hw_commands_vel_[gi] * gear_ratio_;
-      port.cmds[i].tau       = hw_commands_eff_[gi] / gear_ratio_;
-      port.cmds[i].kp        = static_cast<float>(kp_config_);
-      port.cmds[i].kd        = static_cast<float>(kd_config_);
+      if (positions_captured_) {
+        double cmd_pos = hw_commands_pos_[gi];
+        if (cycle_count_ <= STARTUP_GUARD_CYCLES &&
+            cmd_pos == 0.0 && hw_positions_[gi] != 0.0) {
+          cmd_pos = hw_positions_[gi];
+        }
+        port.cmds[i].q  = cmd_pos * gear_ratio_;
+        port.cmds[i].kp = static_cast<float>(kp_config_);
+        port.cmds[i].kd = static_cast<float>(kd_config_);
+      } else {
+        // Startup: keep kp=kd=0, don't drive motor until position is captured
+        port.cmds[i].q  = hw_commands_pos_[gi] * gear_ratio_;
+        port.cmds[i].kp = 0.0;
+        port.cmds[i].kd = 0.0;
+      }
     }
   }
 
