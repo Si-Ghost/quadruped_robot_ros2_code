@@ -14,30 +14,29 @@
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/state.hpp"
 
-#include "serialPort/SerialPort.h"
-#include "unitreeMotor/unitreeMotor.h"
+#include "unitree_motor/motor_controller.hpp"
 
 namespace unitree_hardware_interface
 {
 
-static constexpr int TOTAL_MOTORS  = 3;   // TODO: restore to 12
-static constexpr int PORTS         = 1;   // TODO: restore to 4
-static constexpr int MOTORS_PER_PORT = 3;
+static constexpr int TOTAL_MOTORS  = 3;
+static constexpr int PORTS         = 1;
 
 struct MotorPort
 {
-  std::string              path;
-  int                      base;           // global index offset
-  std::unique_ptr<SerialPort> serial;
-  std::vector<MotorCmd>    cmds;           // 3 per port
-  std::vector<MotorData>   data;           // 3 per port
-  int                      motor_count = 0;
-  bool                     active = false;
+  std::string                              path;
+  int                                      base = 0;
+  std::unique_ptr<unitree_motor::MotorController> controller;
+  std::vector<uint8_t>                     motor_ids;   // local IDs on this bus
+  std::vector<unitree_motor::MotorCommand> cmds;
+  std::vector<unitree_motor::MotorState>   states;
+  bool                                     active = false;
 
-  // health tracking
   int  consecutive_failures = 0;
   bool suspended = false;
   int  suspended_at_cycle = 0;
+
+  int motor_count() const { return static_cast<int>(motor_ids.size()); }
 };
 
 class UnitreeHardwareInterface : public hardware_interface::SystemInterface
@@ -72,36 +71,31 @@ public:
     const rclcpp::Duration & period) override;
 
 private:
-  void init_cmd_buffers();
-  void set_kp_kd(double kp_out, double kd_out);
+  void read_initial_positions();
 
   std::vector<MotorPort> ports_;
 
-  // 12-joint state
   std::vector<double> hw_positions_;
   std::vector<double> hw_velocities_;
   std::vector<double> hw_efforts_;
 
-  // 12-joint commands
   std::vector<double> hw_commands_pos_;
   std::vector<double> hw_commands_vel_;
   std::vector<double> hw_commands_eff_;
 
-  // motor-level params
-  double gear_ratio_ = 1.0;
-  int    motor_mode_ = 0;
-  double kp_config_  = 0.4;
-  double kd_config_  = 0.01;
-  int    baudrate_   = 4000000;
-  int    timeout_us_ = 20000;
+  double gear_ratio_  = 1.0;
+  int    baudrate_    = 4000000;
+  double timeout_sec_ = 0.02;
+  double kp_config_   = 0.4;
+  double kd_config_   = 0.01;
 
   bool   initialized_ = false;
   std::atomic<int> cycle_count_{0};
   std::mutex cmd_mutex_;
 
   static constexpr int SUSPEND_AFTER_FAILURES = 10;
-  static constexpr int PROBE_INTERVAL_CYCLES  = 100;  // ~2s @200Hz
-  static constexpr int STARTUP_GUARD_CYCLES   = 5;    // first ~25ms @200Hz
+  static constexpr int PROBE_INTERVAL_CYCLES  = 100;
+  static constexpr int STARTUP_GUARD_CYCLES   = 5;
 };
 
 }  // namespace unitree_hardware_interface

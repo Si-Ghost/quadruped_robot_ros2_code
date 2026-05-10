@@ -13,26 +13,30 @@ find_package(rclcpp REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
 find_package(pluginlib REQUIRED)
 
-include_directories(
-  include
-  ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/go_motor_control/include
+# ── Open-source motor driver ───────────────────────────────────
+set(UNITREE_MOTOR_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/unitree_motor)
+
+set(UNITREE_MOTOR_SRCS
+  ${UNITREE_MOTOR_DIR}/src/motor_controller.cpp
+  ${UNITREE_MOTOR_DIR}/src/protocol.cpp
+  ${UNITREE_MOTOR_DIR}/src/crc.cpp
 )
 
-link_directories(lib)
-
-if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "aarch64")
-  set(EXTRA_LIBS libUnitreeMotorSDK_Arm64.so)
+# Platform-specific serial backend
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  list(APPEND UNITREE_MOTOR_SRCS ${UNITREE_MOTOR_DIR}/src/serial_linux.cpp)
 else()
-  set(EXTRA_LIBS libUnitreeMotorSDK_Linux64.so)
+  list(APPEND UNITREE_MOTOR_SRCS ${UNITREE_MOTOR_DIR}/src/serial_windows.cpp)
 endif()
 
 add_library(${PROJECT_NAME} SHARED
   src/unitree_hardware_interface.cpp
+  ${UNITREE_MOTOR_SRCS}
 )
 
 target_include_directories(${PROJECT_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/go_motor_control/include>
+  $<BUILD_INTERFACE:${UNITREE_MOTOR_DIR}/include>
   $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
 )
 
@@ -40,7 +44,6 @@ target_link_libraries(${PROJECT_NAME}
   hardware_interface::hardware_interface
   rclcpp::rclcpp
   rclcpp_lifecycle::rclcpp_lifecycle
-  ${EXTRA_LIBS}
 )
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE
@@ -55,12 +58,6 @@ install(TARGETS ${PROJECT_NAME}
 
 install(DIRECTORY include/
   DESTINATION include/${PROJECT_NAME}
-)
-
-install(FILES
-  lib/libUnitreeMotorSDK_Arm64.so
-  lib/libUnitreeMotorSDK_Linux64.so
-  DESTINATION lib
 )
 
 install(DIRECTORY config/
