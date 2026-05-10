@@ -122,12 +122,12 @@ UnitreeHardwareInterface::on_activate(const rclcpp_lifecycle::State &)
 
     bool all_ok = false;
     for (int attempt = 0; attempt < 3 && !all_ok; attempt++) {
-      try {
-        port.serial->sendRecv(port.cmds, port.data);
-        all_ok = true;
-        for (int i = 0; i < port.motor_count; i++) {
-          int gi = port.base + i;
-          if (port.data[i].correct) {
+      all_ok = true;
+      for (int i = 0; i < port.motor_count; i++) {
+        try {
+          bool ok = port.serial->sendRecv(&port.cmds[i], &port.data[i]);
+          if (ok && port.data[i].correct) {
+            int gi = port.base + i;
             hw_positions_[gi]    = port.data[i].q  / gear_ratio_;
             hw_velocities_[gi]   = port.data[i].dq / gear_ratio_;
             hw_efforts_[gi]      = port.data[i].tau * gear_ratio_;
@@ -135,14 +135,14 @@ UnitreeHardwareInterface::on_activate(const rclcpp_lifecycle::State &)
           } else {
             all_ok = false;
           }
+        } catch (...) {
+          all_ok = false;
         }
-        if (!all_ok) {
-          RCLCPP_WARN(rclcpp::get_logger("UnitreeHardwareInterface"),
-                      "%s init read attempt %d had bad CRC, retrying...",
-                      port.path.c_str(), attempt + 1);
-        }
-      } catch (...) {
-        all_ok = false;
+      }
+      if (!all_ok) {
+        RCLCPP_WARN(rclcpp::get_logger("UnitreeHardwareInterface"),
+                    "%s init read attempt %d had bad CRC, retrying...",
+                    port.path.c_str(), attempt + 1);
       }
     }
     if (!all_ok) {
@@ -167,12 +167,11 @@ UnitreeHardwareInterface::on_activate(const rclcpp_lifecycle::State &)
       }
       port.cmds[i].q = hw_commands_pos_[gi] * gear_ratio_;
     }
-    // Actually send the hold command to motors *before* the control loop
-    try {
-      port.serial->sendRecv(port.cmds, port.data);
-    } catch (...) {
-      RCLCPP_WARN(rclcpp::get_logger("UnitreeHardwareInterface"),
-                  "%s final hold sendRecv failed", port.path.c_str());
+    // Actually send the hold command to each motor *before* the control loop
+    for (int i = 0; i < port.motor_count; i++) {
+      try {
+        port.serial->sendRecv(&port.cmds[i], &port.data[i]);
+      } catch (...) {}
     }
   }
 
